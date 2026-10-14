@@ -35,7 +35,7 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
         checkpoints.set(startCheckpointId, new Checkpoint(
             startCheckpointId,
             `map_${lobbyId}_1`,
-            80,
+            90,
             320,
             0
         ));
@@ -45,7 +45,7 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
             "Boss Raid Arena",
             1,
             true,
-            80,
+            90,
             320,
             [],
             [],
@@ -57,7 +57,7 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
             checkpoints,
             itemBoxes: [],
             startCheckpointId,
-            finishLineX: 550,
+            finishLineX: 0, // No finish line during boss battle! (Placed far back on Victory Run)
             totalPipes: 0
         };
     }

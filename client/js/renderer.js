@@ -100,7 +100,17 @@ class CanvasRenderer {
             lucky_block: "assets/images/items/lucky_block.png",
             box: "assets/images/items/lucky_block.png",
             deathnote: "assets/images/items/DeathNote.webp",
-            swap: "assets/images/items/swap.png"
+            swap: "assets/images/items/swap.png",
+            boss1: "assets/images/bosses/boss1.png",
+            boss2: "assets/images/bosses/boss2.png",
+            boss3: "assets/images/bosses/boss3.png",
+            boss4: "assets/images/bosses/boss4.png",
+            boss5: "assets/images/bosses/boss5.png",
+            dragon: "assets/images/bosses/boss1.png",
+            yeti: "assets/images/bosses/boss2.png",
+            duneboss: "assets/images/bosses/boss3.png",
+            candyboss: "assets/images/bosses/boss4.png",
+            waterboss: "assets/images/bosses/boss5.png"
         };
 
         for (let key in sources) {
@@ -191,6 +201,15 @@ class CanvasRenderer {
 
         if (!this.itemImages.swap) {
             this.itemImages.swap = this.images.swap;
+        }
+
+        if (this.assetsConfig.bosses) {
+            for (let boss of this.assetsConfig.bosses) {
+                const bImg = new Image();
+                bImg.src = boss.src;
+                this.images["boss" + boss.index] = bImg;
+                if (boss.id) this.images[boss.id] = bImg;
+            }
         }
     }
 
@@ -1126,7 +1145,9 @@ class CanvasRenderer {
             : Math.max(50, Math.round(this.width * 0.20));
 
         if (this.modeId === "flappy_boss" && (!this.bossState || this.bossState.status !== "victory_run")) {
-            this.cameraX = 0;
+            const arenaW = 1140;
+            const idealCamX = -(this.width - arenaW) / 2;
+            this.cameraX = Math.min(60, idealCamX);
         } else {
             this.cameraX = localBird.x - birdScreenX;
         }
@@ -1430,7 +1451,8 @@ class CanvasRenderer {
     }
 
     renderCheckpointsAndFinish() {
-        if (this.modeId !== "flappy_chained") {
+        // Never render checkpoint blue dashed lines in Chained Mode or Boss Mode
+        if (this.modeId !== "flappy_chained" && this.modeId !== "flappy_boss") {
             for (let chk of this.checkpoints) {
                 if (this.finishLineX > 0 && Math.abs(chk.respawn_coordinate_x - this.finishLineX) < 10) continue;
                 const screenX = chk.respawn_coordinate_x - this.cameraX;
@@ -1446,6 +1468,12 @@ class CanvasRenderer {
                 this.ctx.stroke();
                 this.ctx.restore();
             }
+        }
+
+        // In Boss Mode, NEVER render Finish Line during the boss fights!
+        // Only render the REAL finish line once all 3 bosses are defeated and victory_run starts.
+        if (this.modeId === "flappy_boss" && (!this.bossState || this.bossState.status !== "victory_run")) {
+            return;
         }
 
         if (this.finishLineX > 0) {
@@ -1550,8 +1578,64 @@ class CanvasRenderer {
             this.ctx.shadowBlur = 16 + Math.sin(now / 180) * 8;
         }
 
-        // 2. Boss 1 / 2 / 3 Distinct Visual Designs
-        if (b.bossIndex === 1) {
+        // 2. Boss Sprite (Image Asset with Aspect-Ratio Scaling & Procedural Fallback)
+        const bossImg = this.images && (this.images["boss" + b.bossIndex] || this.images.boss1);
+        let spriteRendered = false;
+        let drawH = 125;
+        let drawW = 125;
+        let drawX = bx;
+        let drawY = by;
+
+        if (bossImg && bossImg.complete && bossImg.naturalWidth > 0) {
+            const nw = bossImg.naturalWidth;
+            const nh = bossImg.naturalHeight;
+            const aspect = nw / nh;
+
+            if (b.bossIndex === 1) {
+                // Boss 1: Fire Dragon (wide wingspan ~1.78 aspect)
+                drawH = 112;
+                drawW = Math.round(drawH * aspect);
+                if (drawW > 205) { drawW = 205; drawH = Math.round(drawW / aspect); }
+            } else if (b.bossIndex === 2) {
+                // Boss 2: Frost Yeti (muscular broad ~1.12 aspect)
+                drawH = 118;
+                drawW = Math.round(drawH * aspect);
+            } else if (b.bossIndex === 3) {
+                // Boss 3: Dune Sandworm (tall serpentine figure-8 ~0.83 aspect)
+                drawH = 132;
+                drawW = Math.round(drawH * aspect);
+            } else if (b.bossIndex === 4) {
+                // Boss 4: Candy Witch (~0.74 aspect)
+                drawH = 125;
+                drawW = Math.round(drawH * aspect);
+            } else if (b.bossIndex === 5) {
+                // Boss 5: Abyssal Leviathan (~0.99 aspect)
+                drawH = 126;
+                drawW = Math.round(drawH * aspect);
+            } else {
+                drawH = 120;
+                drawW = Math.round(drawH * aspect);
+                if (drawW > 200) { drawW = 200; drawH = Math.round(drawW / aspect); }
+            }
+
+            // Align center of sprite to the boss center
+            const centerX = bx + bw / 2;
+            const centerY = by + bh / 2;
+            drawX = Math.round(centerX - drawW / 2);
+            drawY = Math.round(centerY - drawH / 2);
+
+            // Subtle vertical breathing / hovering animation
+            const breathe = Math.sin(now / 200) * 3;
+
+            // Hit Flash tint
+            if (b.hitFlash) {
+                this.ctx.filter = "brightness(2.2) contrast(1.4)";
+            }
+
+            this.ctx.drawImage(bossImg, drawX, drawY + breathe, drawW, drawH);
+            this.ctx.filter = "none";
+            spriteRendered = true;
+        } else if (b.bossIndex === 1) {
             // === IGNIS THE FIRE WYRM ===
             // Glowing flame wings behind body
             const wingFlap = Math.sin(now / 140) * 12;
@@ -1639,72 +1723,53 @@ class CanvasRenderer {
             this.ctx.fillRect(bx - 12, by + 26, 26, 7);
 
         } else {
-            // === MALAKOR THE VOID OVERLORD ===
-            // Swirling Void Tendrils
-            this.ctx.strokeStyle = b.hitFlash ? "#ffffff" : "#8e44ad";
+            // === SHAI-KHAR THE DUNE SANDWORM ===
+            // Desert Sand Serpentine Rings
+            this.ctx.strokeStyle = b.hitFlash ? "#ffffff" : "#d35400";
             this.ctx.lineWidth = 4;
             for (let i = 0; i < 4; i++) {
-                const tendrilWave = Math.sin((now / 160) + i * 1.5) * 16;
+                const sandWave = Math.sin((now / 160) + i * 1.5) * 16;
                 this.ctx.beginPath();
                 this.ctx.moveTo(bx + bw * 0.8, by + 20 + i * 22);
-                this.ctx.quadraticCurveTo(bx + bw + 24, by + 20 + i * 22 + tendrilWave, bx + bw + 42, by + 20 + i * 22);
+                this.ctx.quadraticCurveTo(bx + bw + 24, by + 20 + i * 22 + sandWave, bx + bw + 42, by + 20 + i * 22);
                 this.ctx.stroke();
             }
 
-            // Dark Matter Body
-            const voidGrad = this.ctx.createLinearGradient(bx, by, bx + bw, by + bh);
-            voidGrad.addColorStop(0, b.hitFlash ? "#ffffff" : "#2c2c54");
-            voidGrad.addColorStop(1, b.hitFlash ? "#ffffff" : "#130f40");
-            this.ctx.fillStyle = voidGrad;
+            // Sand-Carved Body
+            const sandGrad = this.ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+            sandGrad.addColorStop(0, b.hitFlash ? "#ffffff" : "#e67e22");
+            sandGrad.addColorStop(1, b.hitFlash ? "#ffffff" : "#d35400");
+            this.ctx.fillStyle = sandGrad;
             this.ctx.beginPath();
             this.ctx.roundRect ? this.ctx.roundRect(bx, by, bw, bh, 20) : this.ctx.fillRect(bx, by, bw, bh);
             this.ctx.fill();
-            this.ctx.strokeStyle = "#e056fd";
+            this.ctx.strokeStyle = "#f39c12";
             this.ctx.lineWidth = 3;
             this.ctx.stroke();
 
-            // Pulsing Void Ring
-            this.ctx.strokeStyle = b.hitFlash ? "#ffffff" : "#be2edd";
+            // Solar Core Ring
+            this.ctx.strokeStyle = b.hitFlash ? "#ffffff" : "#f1c40f";
             this.ctx.lineWidth = 3;
             this.ctx.beginPath();
             this.ctx.arc(bx + bw * 0.5, by + bh * 0.55, 18 + Math.sin(now / 150) * 4, 0, Math.PI * 2);
             this.ctx.stroke();
 
-            // Demonic Crimson Eye
+            // Glowing Amber Maw
             this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#ff3838";
             this.ctx.beginPath();
             this.ctx.arc(bx - 4, by + 32, 6, 0, Math.PI * 2);
             this.ctx.fill();
         }
 
-        // 3. Overhead Health Bar
-        const barW = 120;
-        const barH = 10;
-        const barX = bx + (bw - barW) / 2;
-        const barY = by - 24;
-
-        this.ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-        this.ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
-        this.ctx.strokeStyle = "#ffffff";
-        this.ctx.lineWidth = 1.5;
-        this.ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
-
-        const hpPct = Math.max(0, Math.min(1.0, b.hp / (b.maxHp || 100)));
-        this.ctx.fillStyle = hpPct > 0.5 ? "#2ecc71" : (hpPct > 0.25 ? "#f1c40f" : "#e74c3c");
-        this.ctx.fillRect(barX, barY, barW * hpPct, barH);
-
-        // Overhead Boss Name & HP Text
+        // Overhead Boss Name Tag
         this.ctx.fillStyle = "#ffffff";
         this.ctx.strokeStyle = "#000000";
         this.ctx.lineWidth = 2.5;
-        this.ctx.font = "bold 6.5px 'Press Start 2P', monospace";
+        this.ctx.font = "bold 7px 'Press Start 2P', monospace";
         this.ctx.textAlign = "center";
-        this.ctx.strokeText(`BOSS ${b.bossIndex}/3`, barX + barW / 2, barY - 5);
-        this.ctx.fillText(`BOSS ${b.bossIndex}/3`, barX + barW / 2, barY - 5);
-
-        this.ctx.font = "6px 'Press Start 2P', monospace";
-        this.ctx.fillStyle = "#f7d51d";
-        this.ctx.fillText(`${b.hp}/${b.maxHp}`, barX + barW / 2, barY + barH - 2);
+        const tagY = spriteRendered ? Math.min(by - 10, drawY - 6) : by - 10;
+        this.ctx.strokeText((b.name || "").toUpperCase(), bx + bw / 2, tagY);
+        this.ctx.fillText((b.name || "").toUpperCase(), bx + bw / 2, tagY);
 
         this.ctx.restore();
     }
@@ -1733,8 +1798,17 @@ class CanvasRenderer {
                 this.ctx.textAlign = "center";
                 this.ctx.fillText("⚠️ HAZARD WARNING ⚠️", this.width / 2, b.y + 3);
             } else if (b.isFiring) {
-                // Intense Energy Laser
-                const beamColor = this.bossState.bossIndex === 2 ? "#00ffff" : "#e056fd";
+                // Intense Energy Laser matching boss theme
+                let beamColor = "#ff4757";
+                if (this.bossState.bossIndex === 2) {
+                    beamColor = "#00ffff"; // Frost Cyan
+                } else if (this.bossState.bossIndex === 3) {
+                    beamColor = "#f39c12"; // Golden Solar Sand Beam
+                } else if (this.bossState.bossIndex === 4) {
+                    beamColor = "#fd79a8"; // Sweet Candy Beam
+                } else if (this.bossState.bossIndex === 5) {
+                    beamColor = "#1dd1a1"; // Abyssal Hydro Beam
+                }
                 this.ctx.shadowColor = beamColor;
                 this.ctx.shadowBlur = 18;
 
@@ -1808,8 +1882,71 @@ class CanvasRenderer {
                 this.ctx.lineWidth = 2;
                 this.ctx.stroke();
 
+            } else if (p.type === "sand_orb" || p.type === "sand_spike") {
+                // Desert Sand Blast / Dune Tremor Projectile
+                this.ctx.shadowColor = p.color || "#e67e22";
+                this.ctx.shadowBlur = 14;
+
+                const sGrad = this.ctx.createRadialGradient(px, py, 2, px, py, p.radius);
+                sGrad.addColorStop(0, "#fff5cc");
+                sGrad.addColorStop(0.4, "#f39c12");
+                sGrad.addColorStop(1, p.color || "#d35400");
+                this.ctx.fillStyle = sGrad;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Swirling desert dust ring
+                this.ctx.strokeStyle = "#f1c40f";
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius + 3, 0, Math.PI * 2);
+                this.ctx.stroke();
+
+            } else if (p.type === "candy_magic" || p.type === "candy_orb") {
+                // Candy Witch Magic Sparkle
+                this.ctx.shadowColor = p.color || "#fd79a8";
+                this.ctx.shadowBlur = 14;
+
+                const cGrad = this.ctx.createRadialGradient(px, py, 2, px, py, p.radius);
+                cGrad.addColorStop(0, "#ffffff");
+                cGrad.addColorStop(0.4, "#fd79a8");
+                cGrad.addColorStop(1, p.color || "#e84393");
+                this.ctx.fillStyle = cGrad;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Sparkle ring
+                this.ctx.strokeStyle = "#ffeaa7";
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius + 3, 0, Math.PI * 2);
+                this.ctx.stroke();
+
+            } else if (p.type === "water_bubble" || p.type === "abyssal_orb") {
+                // Abyssal Water Bubble
+                this.ctx.shadowColor = p.color || "#1dd1a1";
+                this.ctx.shadowBlur = 14;
+
+                const wGrad = this.ctx.createRadialGradient(px, py, 2, px, py, p.radius);
+                wGrad.addColorStop(0, "#e0fbfb");
+                wGrad.addColorStop(0.5, "#48dbfb");
+                wGrad.addColorStop(1, p.color || "#10ac84");
+                this.ctx.fillStyle = wGrad;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Aqua ripple ring
+                this.ctx.strokeStyle = "#ffffff";
+                this.ctx.lineWidth = 1.5;
+                this.ctx.beginPath();
+                this.ctx.arc(px - p.radius * 0.3, py - p.radius * 0.3, p.radius * 0.4, 0, Math.PI * 2);
+                this.ctx.stroke();
+
             } else {
-                // Void Orb / Vortex
+                // Void Orb / Vortex Fallback
                 this.ctx.shadowColor = p.color || "#9b59b6";
                 this.ctx.shadowBlur = 16;
 
@@ -2571,9 +2708,110 @@ class CanvasRenderer {
         this.ctx.restore();
     }
 
+    renderBossTopBarHUD() {
+        const b = this.bossState;
+        if (!b) return;
+
+        this.ctx.save();
+
+        const barWidth = Math.min(520, Math.max(220, Math.round(this.width * 0.70)));
+        const barX = Math.round((this.width - barWidth) / 2);
+        const barY = 22;
+        const barHeight = 16;
+
+        // 1. Title Row above the bar: Boss Name & Index (Left) + Player Lives (Right)
+        this.ctx.font = "bold 8px 'Press Start 2P', monospace";
+        this.ctx.textBaseline = "bottom";
+
+        // Boss Theme Color
+        let themeColor = "#ff4757";
+        let accentColor = "#ffa502";
+        if (b.bossIndex === 2) {
+            themeColor = "#00d2d3";
+            accentColor = "#54a0ff";
+        } else if (b.bossIndex === 3) {
+            themeColor = "#f39c12";
+            accentColor = "#e67e22";
+        } else if (b.bossIndex === 4) {
+            themeColor = "#fd79a8";
+            accentColor = "#e84393";
+        } else if (b.bossIndex === 5) {
+            themeColor = "#1dd1a1";
+            accentColor = "#10ac84";
+        }
+
+        // Draw Boss Name with black outline
+        this.ctx.fillStyle = themeColor;
+        this.ctx.strokeStyle = "#000000";
+        this.ctx.lineWidth = 3;
+        this.ctx.textAlign = "left";
+        const bossTitle = `BOSS ${b.bossIndex || 1}/3: ${(b.name || "BOSS").toUpperCase()}`;
+        this.ctx.strokeText(bossTitle, barX, barY - 4);
+        this.ctx.fillText(bossTitle, barX, barY - 4);
+
+        // Draw Player Lives on the right side of the title row
+        this.ctx.textAlign = "right";
+        if (this.physics && this.physics.localIsDeadInBoss) {
+            this.ctx.fillStyle = "#ff4757";
+            this.ctx.strokeText("💀 DEAD", barX + barWidth, barY - 4);
+            this.ctx.fillText("💀 DEAD", barX + barWidth, barY - 4);
+        } else {
+            const lives = (this.physics && this.physics.localBossLives !== undefined) ? this.physics.localBossLives : 2;
+            this.ctx.fillStyle = "#f7d51d";
+            this.ctx.strokeText(`❤️ LIVES: ${lives}`, barX + barWidth, barY - 4);
+            this.ctx.fillText(`❤️ LIVES: ${lives}`, barX + barWidth, barY - 4);
+        }
+
+        // 2. Outer Retro Border & Dark Background
+        this.ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+        this.ctx.strokeStyle = "#ffffff";
+        this.ctx.lineWidth = 2.5;
+        this.ctx.fillRect(barX, barY, barWidth, barHeight);
+        this.ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+        // 3. Inner HP Bar Fill
+        const curHp = Math.max(0, b.hp !== undefined ? b.hp : 100);
+        const maxHp = Math.max(1, b.maxHp !== undefined ? b.maxHp : 100);
+        const hpRatio = Math.max(0, Math.min(1.0, curHp / maxHp));
+
+        if (hpRatio > 0) {
+            const fillWidth = Math.round((barWidth - 4) * hpRatio);
+            const fillGrad = this.ctx.createLinearGradient(barX + 2, barY + 2, barX + 2 + fillWidth, barY + barHeight - 4);
+            fillGrad.addColorStop(0, themeColor);
+            fillGrad.addColorStop(1, accentColor);
+            this.ctx.fillStyle = fillGrad;
+            this.ctx.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4);
+
+            // Subtle highlight line on top half of fill
+            this.ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+            this.ctx.fillRect(barX + 2, barY + 2, fillWidth, Math.round((barHeight - 4) / 2));
+        }
+
+        // 4. Numerical HP Text Centered Inside Bar
+        this.ctx.textAlign = "center";
+        this.ctx.textBaseline = "middle";
+        this.ctx.font = "bold 7px 'Press Start 2P', monospace";
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.strokeStyle = "#000000";
+        this.ctx.lineWidth = 2.5;
+        const hpText = b.status === "intermission" 
+            ? `PREPARE! NEXT IN ${b.intermissionRemaining || 5}s` 
+            : (b.status === "victory_run" ? "VICTORY! FLY TO FINISH! 🏁" : `${curHp} / ${maxHp} HP (${Math.round(hpRatio * 100)}%)`);
+        this.ctx.strokeText(hpText, barX + barWidth / 2, barY + barHeight / 2);
+        this.ctx.fillText(hpText, barX + barWidth / 2, barY + barHeight / 2);
+
+        this.ctx.restore();
+    }
+
     renderRacingProgressBar() {
         if (this.modeId === "rank" || (typeof window !== "undefined" && window.isRankMode)) {
             this.renderRankScoreHUD();
+            return;
+        }
+
+        // In Boss Mode: Replace racing checkpoint/winflag progress bar with prominent Boss HP Bar
+        if (this.modeId === "flappy_boss") {
+            this.renderBossTopBarHUD();
             return;
         }
 

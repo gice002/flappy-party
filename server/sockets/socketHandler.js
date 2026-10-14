@@ -249,6 +249,66 @@ function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = nul
                     break;
                 }
 
+                case "auth_signup": {
+                    const { username, password, playerName } = data || {};
+                    economyService.signUp(username, password, playerName).then(result => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "auth_signup_response",
+                                data: result
+                            }));
+                        }
+                    }).catch(err => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "auth_signup_response",
+                                data: { success: false, error: err.message }
+                            }));
+                        }
+                    });
+                    break;
+                }
+
+                case "auth_signin": {
+                    const { username, password } = data || {};
+                    economyService.signIn(username, password).then(result => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "auth_signin_response",
+                                data: result
+                            }));
+                        }
+                    }).catch(err => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "auth_signin_response",
+                                data: { success: false, error: err.message }
+                            }));
+                        }
+                    });
+                    break;
+                }
+
+                case "auth_get_profile": {
+                    const { player_id, username } = data || {};
+                    economyService.getAuthProfile(player_id, username).then(profile => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "auth_profile_response",
+                                data: { success: !!profile, ...(profile || {}), profile }
+                            }));
+                        }
+                    }).catch(err => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "auth_profile_response",
+                                data: { success: false, error: err.message }
+                            }));
+                        }
+                    });
+                    break;
+                }
+
                 case "network_ping":
                     if (ws.readyState === 1) { // 1 === WebSocket.OPEN
                         ws.send(JSON.stringify({

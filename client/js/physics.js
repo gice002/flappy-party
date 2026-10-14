@@ -189,12 +189,19 @@ class PhysicsEngine {
 
     // Process local dash input instantly with cooldown check
     handleLocalDash() {
-        if (this.isFrozen || this.localIsFinished || this.localIsFrozenInIce || this.localIsKnockedDown) return null;
+        if (this.isFrozen || this.localIsFinished || this.localIsFrozenInIce || this.localIsKnockedDown || (typeof window !== "undefined" && window.isRankMode)) return null;
         const now = Date.now();
         if (this.localDashCooldownUntil && now < this.localDashCooldownUntil) return null;
 
+        const isBossMode = (typeof window !== "undefined" && window.currentLobby && window.currentLobby.mode_id === "flappy_boss");
+        const isVictoryRun = (typeof window !== "undefined" && 
+            ((window.currentBossState && window.currentBossState.status === "victory_run") ||
+             window.bossVictoryRunActive === true));
+
         this.localDashCooldownUntil = now + 3500;
-        this.predictedState.x += 65;
+        if (!isBossMode || isVictoryRun) {
+            this.predictedState.x += 65;
+        }
         this.predictedState.velocityY = Math.min(this.predictedState.velocityY, -1.5);
 
         this.inputSequence++;
@@ -260,7 +267,9 @@ class PhysicsEngine {
         }
 
         const isBossMode = (typeof window !== "undefined" && window.currentLobby && window.currentLobby.mode_id === "flappy_boss");
-        const isVictoryRun = (typeof window !== "undefined" && window.currentBossState && window.currentBossState.status === "victory_run");
+        const isVictoryRun = (typeof window !== "undefined" && 
+            ((window.currentBossState && window.currentBossState.status === "victory_run") ||
+             window.bossVictoryRunActive === true));
 
         if (!isBossMode || isVictoryRun) {
             const speedMult = (this.localSpeedMultiplier !== undefined && this.localSpeedMultiplier !== null) ? this.localSpeedMultiplier : 1.0;
@@ -400,10 +409,14 @@ class PhysicsEngine {
                     if (input.action === "jump") {
                         reconciledVY = this.jumpVelocity;
                     } else if (input.action === "dash") {
-                        reconciledX += 65;
+                        if (!isBossMode || isVictoryRun) {
+                            reconciledX += 65;
+                        }
                         reconciledVY = Math.min(reconciledVY, -1.5);
                     }
-                    reconciledX += this.forwardVelocity * speedMult;
+                    if (!isBossMode || isVictoryRun) {
+                        reconciledX += this.forwardVelocity * speedMult;
+                    }
                     reconciledVY += this.gravity;
                     reconciledY = Math.max(0, reconciledY + reconciledVY);
                 }

@@ -8,17 +8,8 @@ class SupabaseLeaderboardService {
         this.isConfigured = false;
         this.connectionType = "fallback";
 
-        // Initial in-memory fallback data if Supabase keys are not set yet
-        this.fallbackLeaderboard = [
-            { id: "mock-1", name: "SkyKing", score: 48, created_at: new Date(Date.now() - 172800000).toISOString() },
-            { id: "mock-2", name: "AceFlapper", score: 36, created_at: new Date(Date.now() - 86400000).toISOString() },
-            { id: "mock-3", name: "PixelBird", score: 27, created_at: new Date(Date.now() - 43200000).toISOString() },
-            { id: "mock-4", name: "WingMaster", score: 19, created_at: new Date(Date.now() - 259200000).toISOString() },
-            { id: "mock-5", name: "FeatherPro", score: 14, created_at: new Date(Date.now() - 21600000).toISOString() },
-            { id: "mock-6", name: "CloudRider", score: 10, created_at: new Date(Date.now() - 345600000).toISOString() },
-            { id: "mock-7", name: "BreezeFlyer", score: 6, created_at: new Date(Date.now() - 86400000).toISOString() },
-            { id: "mock-8", name: "ChirpChampion", score: 4, created_at: new Date(Date.now() - 172800000).toISOString() }
-        ];
+        // Initial in-memory fallback data (starts clean, no dummy seed data)
+        this.fallbackLeaderboard = [];
 
         this.init();
     }
@@ -76,13 +67,25 @@ class SupabaseLeaderboardService {
         this.connectionType = "fallback";
     }
 
+    // Helper: Calculate human-readable rank tier
+    getRankTier(score) {
+        score = Number(score) || 0;
+        if (score >= 40) return '👑 Champion';
+        if (score >= 25) return '💎 Diamond Flapper';
+        if (score >= 15) return '🥇 Gold Flapper';
+        if (score >= 8)  return '🥈 Silver Flapper';
+        return '🥉 Bronze Flapper';
+    }
+
     // Helper: Map DB row to standard Leaderboard Entry
     formatRow(row, rank = null) {
+        const score = Number(row.score) || 0;
         return {
             id: row.id,
             rank: rank,
             name: row.player_name || row.name || "Anonymous",
-            score: Number(row.score) || 0,
+            score: score,
+            rankTier: row.rank_tier || this.getRankTier(score),
             date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
             createdAt: row.created_at || new Date().toISOString()
         };
@@ -105,7 +108,7 @@ class SupabaseLeaderboardService {
         if (this.pgPool) {
             try {
                 const res = await this.pgPool.query(
-                    `SELECT id, player_name, score, created_at 
+                    `SELECT id, player_name, score, rank_tier, created_at 
                      FROM public.leaderboard 
                      ORDER BY score DESC, created_at ASC 
                      LIMIT $1`,
@@ -123,7 +126,7 @@ class SupabaseLeaderboardService {
             try {
                 const { data, error } = await this.supabaseClient
                     .from("leaderboard")
-                    .select("id, player_name, score, created_at")
+                    .select("id, player_name, score, rank_tier, created_at")
                     .order("score", { ascending: false })
                     .order("created_at", { ascending: true })
                     .limit(limit);
@@ -146,6 +149,7 @@ class SupabaseLeaderboardService {
     async recordScore(playerName, score) {
         const cleanName = String(playerName || "FlappyHero").trim().slice(0, 16) || "FlappyHero";
         const validScore = Math.max(0, parseInt(score, 10) || 0);
+        const rankTier = this.getRankTier(validScore);
 
         if (!this.isConfigured) {
             return this.recordScoreFallback(cleanName, validScore);
@@ -154,22 +158,30 @@ class SupabaseLeaderboardService {
         // Method 1: Native Postgres Pool
         if (this.pgPool) {
             try {
-                const insertRes = await this.pgPool.query(
-                    `INSERT INTO public.leaderboard (player_name, score) 
-                     VALUES ($1, $2) 
-                     RETURNING id, player_name, score, created_at`,
-                    [cleanName, validScore]
+                // Atomic Personal Best Upsert with expression unique index
+                const upsertRes = await this.pgPool.query(
+                    `INSERT INTO public.leaderboard (player_name, score, rank_tier, created_at)
+                     VALUES ($1, $2, $3, now())
+                     ON CONFLICT (LOWER(player_name))
+                     DO UPDATE SET 
+                         score = GREATEST(public.leaderboard.score, EXCLUDED.score),
+                         rank_tier = CASE WHEN EXCLUDED.score > public.leaderboard.score THEN EXCLUDED.rank_tier ELSE public.leaderboard.rank_tier END,
+                         created_at = CASE WHEN EXCLUDED.score > public.leaderboard.score THEN now() ELSE public.leaderboard.created_at END
+                     RETURNING id, player_name, score, rank_tier, created_at`,
+                    [cleanName, validScore, rankTier]
                 );
-                const insertedRow = insertRes.rows && insertRes.rows[0] ? insertRes.rows[0] : null;
+
+                const insertedRow = upsertRes.rows && upsertRes.rows[0] ? upsertRes.rows[0] : null;
 
                 // Calculate rank: count rows with strictly higher score
                 let playerRank = 1;
                 try {
+                    const effectiveScore = insertedRow ? insertedRow.score : validScore;
                     const rankRes = await this.pgPool.query(
                         `SELECT count(*)::int AS higher_count 
                          FROM public.leaderboard 
                          WHERE score > $1`,
-                        [validScore]
+                        [effectiveScore]
                     );
                     playerRank = (rankRes.rows[0]?.higher_count || 0) + 1;
                 } catch (rankErr) {
@@ -181,11 +193,11 @@ class SupabaseLeaderboardService {
                     success: true,
                     leaderboard: topScores,
                     playerRank: playerRank,
-                    newEntry: insertedRow ? this.formatRow(insertedRow, playerRank) : { name: cleanName, score: validScore, rank: playerRank },
+                    newEntry: insertedRow ? this.formatRow(insertedRow, playerRank) : { name: cleanName, score: validScore, rankTier, rank: playerRank },
                     source: "supabase_postgres"
                 };
             } catch (err) {
-                console.error("[Supabase Postgres] Insert error:", err.message);
+                console.error("[Supabase Postgres] Insert/Update error:", err.message);
                 return this.recordScoreFallback(cleanName, validScore);
             }
         }
@@ -193,27 +205,48 @@ class SupabaseLeaderboardService {
         // Method 2: Supabase REST Client
         if (this.supabaseClient) {
             try {
-                const { data: inserted, error: insertError } = await this.supabaseClient
+                const { data: existingList } = await this.supabaseClient
                     .from("leaderboard")
-                    .insert([{
-                        player_name: cleanName,
-                        score: validScore
-                    }])
-                    .select();
+                    .select("id, player_name, score, rank_tier")
+                    .ilike("player_name", cleanName);
 
-                if (insertError) {
-                    console.error("[Supabase REST] Insert failed:", insertError.message);
-                    return this.recordScoreFallback(cleanName, validScore);
+                let insertedRow = null;
+                if (existingList && existingList.length > 0) {
+                    const existing = existingList[0];
+                    if (validScore > existing.score) {
+                        const { data: updated } = await this.supabaseClient
+                            .from("leaderboard")
+                            .update({ score: validScore, rank_tier: rankTier, created_at: new Date().toISOString() })
+                            .eq("id", existing.id)
+                            .select();
+                        insertedRow = updated && updated[0] ? updated[0] : null;
+                    } else {
+                        insertedRow = existing;
+                    }
+                } else {
+                    const { data: inserted, error: insertError } = await this.supabaseClient
+                        .from("leaderboard")
+                        .insert([{
+                            player_name: cleanName,
+                            score: validScore,
+                            rank_tier: rankTier
+                        }])
+                        .select();
+
+                    if (insertError) {
+                        console.error("[Supabase REST] Insert failed:", insertError.message);
+                        return this.recordScoreFallback(cleanName, validScore);
+                    }
+                    insertedRow = inserted && inserted[0] ? inserted[0] : null;
                 }
-
-                const insertedRow = inserted && inserted[0] ? inserted[0] : null;
 
                 let playerRank = 1;
                 try {
+                    const effectiveScore = insertedRow ? insertedRow.score : validScore;
                     const { count, error: countError } = await this.supabaseClient
                         .from("leaderboard")
                         .select("id", { count: "exact", head: true })
-                        .gt("score", validScore);
+                        .gt("score", effectiveScore);
 
                     if (!countError && typeof count === "number") {
                         playerRank = count + 1;
@@ -227,7 +260,7 @@ class SupabaseLeaderboardService {
                     success: true,
                     leaderboard: topScores,
                     playerRank: playerRank,
-                    newEntry: insertedRow ? this.formatRow(insertedRow, playerRank) : { name: cleanName, score: validScore, rank: playerRank },
+                    newEntry: insertedRow ? this.formatRow(insertedRow, playerRank) : { name: cleanName, score: validScore, rankTier, rank: playerRank },
                     source: "supabase_rest"
                 };
             } catch (err) {
@@ -240,22 +273,36 @@ class SupabaseLeaderboardService {
     }
 
     recordScoreFallback(cleanName, validScore) {
-        const newEntry = {
-            id: "local-" + Date.now(),
-            name: cleanName,
-            score: validScore,
-            created_at: new Date().toISOString()
-        };
-        this.fallbackLeaderboard.push(newEntry);
+        const rankTier = this.getRankTier(validScore);
+        const existingIdx = this.fallbackLeaderboard.findIndex(e => (e.name || "").toLowerCase() === cleanName.toLowerCase());
+        let entry;
+        if (existingIdx >= 0) {
+            if (validScore > this.fallbackLeaderboard[existingIdx].score) {
+                this.fallbackLeaderboard[existingIdx].score = validScore;
+                this.fallbackLeaderboard[existingIdx].rank_tier = rankTier;
+                this.fallbackLeaderboard[existingIdx].created_at = new Date().toISOString();
+            }
+            entry = this.fallbackLeaderboard[existingIdx];
+        } else {
+            entry = {
+                id: "local-" + Date.now(),
+                name: cleanName,
+                score: validScore,
+                rank_tier: rankTier,
+                created_at: new Date().toISOString()
+            };
+            this.fallbackLeaderboard.push(entry);
+        }
+
         this.fallbackLeaderboard.sort((a, b) => b.score - a.score);
-        const playerRank = this.fallbackLeaderboard.findIndex(e => e.id === newEntry.id) + 1;
+        const playerRank = this.fallbackLeaderboard.findIndex(e => (e.name || "").toLowerCase() === cleanName.toLowerCase()) + 1;
         const topScores = this.getFallbackTop(10);
 
         return {
             success: true,
             leaderboard: topScores,
             playerRank: playerRank,
-            newEntry: this.formatRow(newEntry, playerRank),
+            newEntry: this.formatRow(entry, playerRank),
             source: "fallback"
         };
     }

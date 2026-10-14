@@ -81,15 +81,20 @@ Send players the URL with your Cloudflare tunnel backend parameter attached:
   * 🛡️ **Barrier Shield (`shield`)**: Grants an energy shield blocking the next incoming hazard.
 
 ### 4. 👹 Flappy Boss (3 Bosses Co-op Raid)
-* **Stage Layout & Fixed-Position Flight**:
-  * Giant animated boss entity anchored on the right side of the screen ($X \approx 270$).
-  * **No pipes**: The stage consists entirely of open skies, the boss, projectile hazards, and collectible energy orbs.
-  * **Fixed-Position Movement**: Players fly up and down in a fixed horizontal slot ($X \approx 60 - 135$) purely to dodge attacks.
-  * **Dynamic Boss Backgrounds**: Smooth real-time background shader cross-fading tailored to each boss (`volcano` -> `snowy` -> `city_night`).
+* **Stage Layout & Dynamic Boss Positioning**:
+  * **Boss Distance & Positioning**: Positioned comfortably on the far right of the screen ($X \approx 275 - 295$) to maximize dodging space for players.
+  * **Dynamic 2D Movement (In-Out & Up-Down)**: The boss hovers dynamically, moving both horizontally in-and-out and vertically up-and-down with smooth sinusoidal oscillations.
+  * **Strict Center Screen Boundary**: The boss **NEVER crosses left of the Center Screen** ($X \ge 195 > 180$), keeping the battle cleanly separated.
+  * **Clean Boss Arena (No Distractions)**:
+    * **No blue dashed lines**: Checkpoint indicators are completely removed.
+    * **No middle finish line**: The finish line is removed from the stage during the boss fight (`finishLineX = 0`).
+* **Top Bar Boss Health Bar (Real-Time HUD)**:
+  * Replaces the old race checkpoint/progress bar with a prominent, pixel-art **Boss HP Bar** centered at the very top of the screen.
+  * Displays: Active Boss Name & Index (`BOSS 1/3: IGNIS`), remaining Player Lives (`❤️ LIVES: 2`), real-time thematic health gradient, and numerical HP readout (`75 / 100 HP`).
 * **3 Sequential Bosses & HP Scaling**:
-  1. **Ignis the Fire Wyrm (Boss 1)**: Volcano inferno theme. Base HP: 100. Attacks: Magma fireballs and horizontal spread waves.
-  2. **Glacius the Frost Titan (Boss 2)**: Snowy tundra theme. Base HP: 150. Attacks: Piercing ice shards and high-energy frost laser beams preceded by 1.2s telegraph hazard warning lines.
-  3. **Malakor the Void Overlord (Boss 3)**: City night neon theme. Base HP: 200. Attacks: Dual void laser beams and tracking void vortex spheres.
+  1. **Ignis the Fire Wyrm (Boss 1 / Eagle)**: Volcano inferno theme (`boss1.png`). Base HP: 100. Attacks: Magma fireballs and horizontal flame spread waves.
+  2. **Glacius the Frost Titan (Boss 2 / Yeti)**: Snowy tundra theme (`boss2.png`). Base HP: 150. Attacks: Piercing ice shards and high-energy frost laser beams preceded by 1.2s telegraph hazard warning lines.
+  3. **Malakor the Void Overlord (Boss 3)**: City night neon theme (`boss3.png`). Base HP: 200. Attacks: Dual void laser beams and tracking void vortex spheres.
   * **Dynamic Player HP Scaling**: Boss HP multiplies by the number of players ($HP = \text{baseHp} \times \text{playerCount}$).
 * **Player Attack System**:
   * Periodically spawns glowing collectible Energy Orbs across the dodge zone.
@@ -101,9 +106,11 @@ Send players the URL with your Cloudflare tunnel backend parameter attached:
   * **Boss Defeat & Teammate Revival**: Defeating a boss immediately revives all fallen teammates with full 2 lives restored!
   * **5-Second Intermission**: 5-second rest and preparation countdown before the next boss descends.
   * **Team Wipeout**: If all players lose all lives, the raid ends in defeat.
-* **Stage Conclusion & Economy Rewards**:
-  * Slaying Boss 3 transitions into a celebratory **Victory Run** flying forward into the Golden Finish Line!
-  * Awards **+75 Coins** into the Supabase Wallet for a full clear, or +25 to +45 coins on partial boss clears.
+* **Stage Conclusion & Post-Boss Victory Run**:
+  * After defeating all 3 bosses, the birds' fixed-position lock is released: **players can fly forward and dash freely**!
+  * The camera smoothly pans forward across the open skies.
+  * A **REAL Finish Line appears far in the distance ($X = 1200$)**, which players fly through to touch and finish the raid in celebration!
+  * Awards **+75 Coins** into the persistent Supabase Wallet for a full clear, or +25 to +45 coins on partial boss clears.
 
 ---
 
@@ -190,8 +197,8 @@ flappy-bird/
 
 An authoritative, server-driven game economy integrated with **Supabase PostgreSQL**. Players earn coins by proving their skills across all game modes, which are stored in their persistent **Wallet** and can be spent in the **Hat Shop & Customization** lounge.
 
-### 1. 🗄️ 5 Core Database Tables in Supabase
-All 5 tables are defined with UUID primary keys, foreign key constraints, Row Level Security (RLS) policies, and performance indexes in [`server/db/economy_schema.sql`](file:///home/notsiri/university/projects/network/flappy-bird/server/db/economy_schema.sql):
+### 1. 🗄️ 5 Core Database Tables in Supabase (with Human-Readable Attributes)
+All 5 tables are defined with UUID primary keys, foreign key constraints, Row Level Security (RLS) policies, human-readable attributes, and performance indexes in [`server/db/economy_schema.sql`](file:///home/notsiri/university/projects/network/flappy-bird/server/db/economy_schema.sql):
 
 ```sql
 -- 1. Table: player
@@ -199,6 +206,7 @@ CREATE TABLE public.player (
     player_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     player_name TEXT NOT NULL UNIQUE,
     unlocked_hats INTEGER[] DEFAULT '{0, 3}', -- Free starter hats: 0 (None), 3 (Red Cap)
+    unlocked_hat_names TEXT[] DEFAULT '{"None", "Red Cap"}', -- Human-readable hat names
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
@@ -206,6 +214,7 @@ CREATE TABLE public.player (
 CREATE TABLE public.login (
     login_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     player_id UUID NOT NULL REFERENCES public.player(player_id) ON DELETE CASCADE,
+    player_name TEXT, -- Human-readable display name linked directly on login table
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL, -- Plain text as specified
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
@@ -217,6 +226,7 @@ CREATE TABLE public.leaderboard (
     player_id UUID REFERENCES public.player(player_id) ON DELETE SET NULL,
     player_name TEXT NOT NULL,
     score INTEGER NOT NULL DEFAULT 0,
+    rank_tier TEXT DEFAULT '🥉 Bronze Flapper', -- Human-readable tier (Champion, Diamond, Gold, Silver, Bronze)
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
@@ -224,6 +234,7 @@ CREATE TABLE public.leaderboard (
 CREATE TABLE public.wallet (
     wallet_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     player_id UUID UNIQUE NOT NULL REFERENCES public.player(player_id) ON DELETE CASCADE,
+    player_name TEXT, -- Human-readable player name directly visible on wallet inspection
     balance INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
@@ -232,7 +243,9 @@ CREATE TABLE public.wallet (
 CREATE TABLE public.transaction_log (
     log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     player_id UUID NOT NULL REFERENCES public.player(player_id) ON DELETE CASCADE,
+    player_name TEXT, -- Human-readable player name
     amount INTEGER NOT NULL,
+    transaction_type TEXT DEFAULT 'REWARD_EARNED', -- Human-readable type: 'REWARD_EARNED', 'ITEM_PURCHASE', 'ACCOUNT_INITIAL'
     reason TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
@@ -291,20 +304,55 @@ DIRECT_URL=postgresql://postgres.[PROJECT-REF]:[ENCODED-PASSWORD]@aws-0-ap-north
 ```
 
 ### 3. REST API & WebSocket Events Reference
+* **`POST /api/auth/signup`**: Body: `{ username, password, playerName }`. Validates username uniqueness, registers in `player`, `login`, and `wallet` tables (initial balance 0).
+* **`POST /api/auth/signin`** (alias **`/api/auth/login`**): Body: `{ username, password }`. Validates plain-text credentials, returns full player profile and session.
+* **`GET /api/auth/me?username=...`**: Fetches authenticated player profile.
 * **`GET /api/shop/hats`**: Returns all 5 catalog hats with pricing and free status.
 * **`GET /api/player/wallet?name=PlayerName`**: Returns player's wallet balance, player UUID, and unlocked hats.
 * **`POST /api/shop/buy-hat`**: Body: `{ playerName, hatId }`. Authoritative balance deduction and hat unlock.
 * **`GET /api/player/transactions?name=PlayerName&limit=10`**: Returns recent transaction history with reasons and amounts.
-* **`POST /api/auth/register-login`**: Body: `{ username, password, playerName }`. Records plain-text credentials in `login` table.
 * **`GET /api/leaderboard?limit=10`**: Returns Top 10 rankings directly from Supabase.
 * **`POST /api/rank/start`**: Creates an authoritative session token with server timestamp.
 * **`POST /api/rank/game-over`**: Validates session duration against physical limits and saves score directly to Supabase.
 * **WebSocket Events**:
+  * `auth_signup` ➡️ `auth_signup_response`
+  * `auth_signin` ➡️ `auth_signin_response`
+  * `auth_get_profile` ➡️ `auth_profile_response`
   * `get_wallet` ➡️ `wallet_data`
   * `buy_hat` ➡️ `buy_hat_result`
   * `start_rank_session` ➡️ `rank_session_started`
   * `rank_game_over` ➡️ `rank_game_over_result`
   * `get_rank_leaderboard` ➡️ `rank_leaderboard_data`
+
+---
+
+## 🔐 Authentication System (Login / Sign Up)
+
+A dedicated, retro pixel-art authentication flow designed for mobile portrait and desktop screens:
+
+### 1. 📱 Client UI & Flow
+* **Landing Screen**: First-time players or unauthenticated users land on `#screen-auth`.
+* **Tab Switcher**: Seamless switching between **🔑 SIGN IN** and **✨ SIGN UP** without reloading.
+* **Inputs**:
+  * **Username**: Required, minimum 3 characters.
+  * **Password**: Plain text display as per project specifications.
+  * **In-Game Name (Sign Up only)**: Optional custom display name (defaults to username if blank).
+* **Guest Play (Skip)**: Allows quick casual play without an account (`👤 PLAY AS GUEST`).
+* **Main Menu Account Status Bar**: Displays current account status (⭐ Player Name `@username` with **🚪 LOGOUT** button, or 👤 Guest Player with **🔑 LOGIN** button).
+* **Session Persistence**: Stores authenticated session in `localStorage` (`FLAPPY_AUTH_SESSION`) for seamless auto-login on return visits.
+
+### 2. 🛡️ Authoritative Backend Verification
+* **Sign Up (`economyService.signUp`)**:
+  * Checks uniqueness in `login` table. Returns HTTP 409 if taken.
+  * Inserts record into `player` table (guarantees unique display name).
+  * Inserts record into `login` table (`player_id`, `username`, `password`).
+  * Creates starting `wallet` entry with `balance = 0`.
+  * Logs initial account registration in `transaction_log`.
+* **Sign In (`economyService.signIn`)**:
+  * Validates credentials against `login` joined with `player` and `wallet`.
+  * Rejects incorrect credentials with HTTP 401.
+  * Returns full session payload (`player_id`, `player_name`, `username`, `balance`, `unlocked_hats`).
+* **Hybrid Transport**: Supports both standard REST API (`/api/auth/*`) and real-time WebSocket events (`auth_signup`, `auth_signin`) for environments utilizing Cloudflare Tunnels.
 
 ---
 

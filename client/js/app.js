@@ -222,12 +222,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // DOM Screens
     const screens = {
+        authScreen: document.getElementById("screen-auth"),
         mainMenu: document.getElementById("screen-main-menu"),
         lobbyRoom: document.getElementById("screen-lobby"),
         loadingScreen: document.getElementById("screen-loading"),
         gameView: document.getElementById("screen-game"),
         resultsView: document.getElementById("screen-results")
     };
+
+    // Auth Screen Elements
+    const screenAuth = document.getElementById("screen-auth");
+    const tabAuthSignin = document.getElementById("tab-auth-signin");
+    const tabAuthSignup = document.getElementById("tab-auth-signup");
+    const formAuth = document.getElementById("form-auth");
+    const groupAuthPlayername = document.getElementById("group-auth-playername");
+    const inputAuthUsername = document.getElementById("input-auth-username");
+    const inputAuthPassword = document.getElementById("input-auth-password");
+    const inputAuthPlayername = document.getElementById("input-auth-playername");
+    const btnAuthSubmit = document.getElementById("btn-auth-submit");
+    const btnAuthGuest = document.getElementById("btn-auth-guest");
+    const authErrorMsg = document.getElementById("auth-error-msg");
+    const authSuccessMsg = document.getElementById("auth-success-msg");
+    const btnHeaderAuth = document.getElementById("btn-header-auth");
+    const accountStatusName = document.getElementById("account-status-name");
+    const accountStatusSub = document.getElementById("account-status-sub");
+    const accountStatusIcon = document.getElementById("account-status-icon");
 
     // DOM Modals
     const modals = {
@@ -404,6 +423,41 @@ document.addEventListener("DOMContentLoaded", () => {
         const targetWidth = Math.round(targetHeight * aspect);
 
         renderer.resize(targetWidth, targetHeight);
+        updateBossOrientationOverlay();
+    }
+
+    function requestLandscapeOrientation() {
+        try {
+            if (screen.orientation && typeof screen.orientation.lock === "function") {
+                screen.orientation.lock("landscape").catch(() => {});
+            }
+        } catch (e) {}
+    }
+
+    function unlockScreenOrientation() {
+        try {
+            if (screen.orientation && typeof screen.orientation.unlock === "function") {
+                screen.orientation.unlock().catch(() => {});
+            }
+        } catch (e) {}
+    }
+
+    function updateBossOrientationOverlay() {
+        const overlay = document.getElementById("boss-orientation-overlay");
+        if (!overlay) return;
+
+        const isBossMode = (currentLobby && currentLobby.mode_id === "flappy_boss") ||
+                           (renderer && renderer.modeId === "flappy_boss");
+        const screenGame = document.getElementById("screen-game");
+        const isGameActive = screenGame && screenGame.classList.contains("active");
+        const isPortrait = window.innerHeight > window.innerWidth;
+
+        if (isBossMode && isGameActive && isPortrait) {
+            overlay.style.display = "flex";
+            requestLandscapeOrientation();
+        } else {
+            overlay.style.display = "none";
+        }
     }
 
     applyResponsiveLayout();
@@ -416,6 +470,10 @@ document.addEventListener("DOMContentLoaded", () => {
     let localPlayerId = null;
     let gameLoopRunning = false;
     let animationFrameId = null;
+    let rankActiveSessionToken = 0;
+    let rankGameOverUiTimeout = null;
+    let rankApiFallbackTimeout = null;
+    let rankGameOverResolved = false;
 
     const skins = ["Classic Yellow", "Ruby Red", "Emerald Green", "Ocean Blue", "Royal Purple"];
     const hats = ["None", "Golden Crown", "Top Hat", "Red Cap", "Viking Helmet"];
@@ -576,11 +634,270 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (screenKey === "gameView") {
             applyResponsiveLayout();
+            if ((currentLobby && currentLobby.mode_id === "flappy_boss") || (renderer && renderer.modeId === "flappy_boss")) {
+                requestLandscapeOrientation();
+            }
+            updateBossOrientationOverlay();
         } else {
+            stopGameLoop();
             if (hudBossPanel) hudBossPanel.style.display = "none";
             if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
+            unlockScreenOrientation();
+            updateBossOrientationOverlay();
         }
     }
+
+    // ====================================================================
+    // USER AUTHENTICATION CONTROLLER (SIGN IN / SIGN UP / SESSION)
+    // ====================================================================
+    let currentAuthUser = null; // { player_id, player_name, username, balance, unlocked_hats }
+    let authMode = "signin"; // "signin" | "signup"
+
+    function setAuthAlert(msg, isSuccess = false) {
+        if (!msg) {
+            if (authErrorMsg) authErrorMsg.style.display = "none";
+            if (authSuccessMsg) authSuccessMsg.style.display = "none";
+            return;
+        }
+        if (isSuccess) {
+            if (authErrorMsg) authErrorMsg.style.display = "none";
+            if (authSuccessMsg) {
+                authSuccessMsg.textContent = msg;
+                authSuccessMsg.style.display = "block";
+            }
+        } else {
+            if (authSuccessMsg) authSuccessMsg.style.display = "none";
+            if (authErrorMsg) {
+                authErrorMsg.textContent = msg;
+                authErrorMsg.style.display = "block";
+            }
+        }
+    }
+
+    function switchAuthMode(mode) {
+        authMode = mode;
+        setAuthAlert("");
+        if (mode === "signin") {
+            if (tabAuthSignin) {
+                tabAuthSignin.classList.add("active");
+                tabAuthSignin.style.background = "#55b02e";
+            }
+            if (tabAuthSignup) {
+                tabAuthSignup.classList.remove("active");
+                tabAuthSignup.style.background = "#34495e";
+            }
+            if (groupAuthPlayername) groupAuthPlayername.style.display = "none";
+            if (btnAuthSubmit) btnAuthSubmit.textContent = "▶ SIGN IN";
+        } else {
+            if (tabAuthSignup) {
+                tabAuthSignup.classList.add("active");
+                tabAuthSignup.style.background = "#55b02e";
+            }
+            if (tabAuthSignin) {
+                tabAuthSignin.classList.remove("active");
+                tabAuthSignin.style.background = "#34495e";
+            }
+            if (groupAuthPlayername) groupAuthPlayername.style.display = "block";
+            if (btnAuthSubmit) btnAuthSubmit.textContent = "✨ SIGN UP";
+        }
+    }
+
+    function updateAccountHeaderUI() {
+        if (currentAuthUser && currentAuthUser.username) {
+            if (accountStatusName) accountStatusName.textContent = currentAuthUser.player_name || currentAuthUser.username;
+            if (accountStatusSub) accountStatusSub.textContent = `@${currentAuthUser.username}`;
+            if (accountStatusIcon) accountStatusIcon.textContent = "⭐";
+            if (btnHeaderAuth) {
+                btnHeaderAuth.textContent = "🚪 LOGOUT";
+                btnHeaderAuth.title = "Logout from current account";
+            }
+        } else {
+            if (accountStatusName) accountStatusName.textContent = "Guest Player";
+            if (accountStatusSub) accountStatusSub.textContent = "Not logged in";
+            if (accountStatusIcon) accountStatusIcon.textContent = "👤";
+            if (btnHeaderAuth) {
+                btnHeaderAuth.textContent = "🔑 LOGIN";
+                btnHeaderAuth.title = "Sign In or Sign Up";
+            }
+        }
+    }
+
+    function applyUserSession(user) {
+        currentAuthUser = user;
+        window.playerName = user.player_name;
+        window.playerId = user.player_id;
+        window.playerUsername = user.username;
+        if (nameInput) nameInput.value = user.player_name;
+        if (user.balance !== undefined) {
+            updateWalletUI(user.balance);
+        }
+        if (Array.isArray(user.unlocked_hats) && typeof window.setUnlockedHats === "function") {
+            window.setUnlockedHats(user.unlocked_hats);
+        }
+        try {
+            localStorage.setItem("FLAPPY_AUTH_SESSION", JSON.stringify(user));
+        } catch (e) {}
+        updateAccountHeaderUI();
+    }
+
+    function logoutUser() {
+        currentAuthUser = null;
+        window.playerId = null;
+        window.playerUsername = null;
+        try {
+            localStorage.removeItem("FLAPPY_AUTH_SESSION");
+        } catch (e) {}
+        updateAccountHeaderUI();
+        showScreen("authScreen");
+        switchAuthMode("signin");
+        setAuthAlert("Logged out successfully.", true);
+    }
+
+    async function handleAuthSubmit() {
+        const username = inputAuthUsername ? inputAuthUsername.value.trim() : "";
+        const password = inputAuthPassword ? inputAuthPassword.value.trim() : "";
+        const playerName = inputAuthPlayername ? inputAuthPlayername.value.trim() : "";
+
+        if (!username) {
+            setAuthAlert("Please enter a username.");
+            return;
+        }
+        if (username.length < 3) {
+            setAuthAlert("Username must be at least 3 characters.");
+            return;
+        }
+        if (!password) {
+            setAuthAlert("Please enter a password.");
+            return;
+        }
+
+        const originalText = btnAuthSubmit ? btnAuthSubmit.textContent : "";
+        if (btnAuthSubmit) {
+            btnAuthSubmit.disabled = true;
+            btnAuthSubmit.textContent = "PROCESSING...";
+        }
+        setAuthAlert("");
+
+        const endpoint = authMode === "signup" ? "/api/auth/signup" : "/api/auth/signin";
+        const payload = { username, password };
+        if (authMode === "signup") {
+            payload.playerName = playerName || username;
+        }
+
+        try {
+            const res = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+
+            if (!res.ok || !data.success) {
+                setAuthAlert(data.error || "Authentication failed. Please check your credentials.");
+                if (btnAuthSubmit) {
+                    btnAuthSubmit.disabled = false;
+                    btnAuthSubmit.textContent = originalText;
+                }
+                return;
+            }
+
+            // Success
+            setAuthAlert(authMode === "signup" ? "Account created successfully! Welcome!" : "Welcome back! Loading game...", true);
+            applyUserSession(data);
+
+            setTimeout(() => {
+                showScreen("mainMenu");
+                fetchUserWallet(data.player_name);
+                if (btnAuthSubmit) {
+                    btnAuthSubmit.disabled = false;
+                    btnAuthSubmit.textContent = originalText;
+                }
+                setAuthAlert("");
+            }, 600);
+
+        } catch (fetchErr) {
+            console.warn("[Auth] REST fetch failed, attempting WebSocket fallback:", fetchErr);
+            const wsEventType = authMode === "signup" ? "auth_signup" : "auth_signin";
+            window.pendingAuthResolve = (wsData) => {
+                if (btnAuthSubmit) {
+                    btnAuthSubmit.disabled = false;
+                    btnAuthSubmit.textContent = originalText;
+                }
+                if (wsData && wsData.success) {
+                    setAuthAlert(authMode === "signup" ? "Account created successfully!" : "Welcome back!", true);
+                    applyUserSession(wsData);
+                    setTimeout(() => {
+                        showScreen("mainMenu");
+                        fetchUserWallet(wsData.player_name);
+                        setAuthAlert("");
+                    }, 600);
+                } else {
+                    setAuthAlert((wsData && wsData.error) || "Authentication failed.");
+                }
+            };
+            if (!sendWs(wsEventType, payload)) {
+                setAuthAlert("Connection error. Could not connect to game server.");
+                if (btnAuthSubmit) {
+                    btnAuthSubmit.disabled = false;
+                    btnAuthSubmit.textContent = originalText;
+                }
+            }
+        }
+    }
+
+    // Auth Event Listeners
+    if (tabAuthSignin) {
+        tabAuthSignin.addEventListener("click", () => switchAuthMode("signin"));
+    }
+    if (tabAuthSignup) {
+        tabAuthSignup.addEventListener("click", () => switchAuthMode("signup"));
+    }
+    if (btnAuthSubmit) {
+        btnAuthSubmit.addEventListener("click", (e) => {
+            e.preventDefault();
+            handleAuthSubmit();
+        });
+    }
+    if (formAuth) {
+        formAuth.addEventListener("submit", (e) => {
+            e.preventDefault();
+            handleAuthSubmit();
+        });
+    }
+    if (btnAuthGuest) {
+        btnAuthGuest.addEventListener("click", () => {
+            const guestName = (nameInput && nameInput.value.trim()) || "FlappyHero";
+            window.playerName = guestName;
+            currentAuthUser = null;
+            updateAccountHeaderUI();
+            showScreen("mainMenu");
+            fetchUserWallet(guestName);
+        });
+    }
+    if (btnHeaderAuth) {
+        btnHeaderAuth.addEventListener("click", () => {
+            if (currentAuthUser) {
+                if (confirm(`Do you want to log out from @${currentAuthUser.username}?`)) {
+                    logoutUser();
+                }
+            } else {
+                showScreen("authScreen");
+                switchAuthMode("signin");
+                setAuthAlert("");
+            }
+        });
+    }
+
+    [inputAuthUsername, inputAuthPassword, inputAuthPlayername].forEach(el => {
+        if (el) {
+            el.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAuthSubmit();
+                }
+            });
+        }
+    });
 
     // Customization Event Listeners
     btnPrevSkin.addEventListener("click", () => {
@@ -787,9 +1104,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
         leaderboardBody.innerHTML = "";
         if (!leaderboard || leaderboard.length === 0) {
-            leaderboardBody.innerHTML = `<tr><td colspan="4" style="padding: 12px; text-align: center;">No records found yet!</td></tr>`;
+            leaderboardBody.innerHTML = `<tr><td colspan="4" style="padding: 16px; text-align: center; color: #666;">No rank records yet. Play Rank to set the first score!</td></tr>`;
             return;
         }
+
+        const myName = (
+            (window.currentUser && (window.currentUser.player_name || window.currentUser.username)) ||
+            (nameInput && nameInput.value ? nameInput.value.trim() : "") ||
+            window.playerName ||
+            ""
+        ).toLowerCase();
 
         for (let i = 0; i < leaderboard.length; i++) {
             const entry = leaderboard[i];
@@ -799,21 +1123,26 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (rankNum === 2) rankMedal = "🥈 #2";
             else if (rankNum === 3) rankMedal = "🥉 #3";
 
-            const isCurrent = newEntry && (
+            const entryPlayerName = (entry.name || entry.player_name || "").trim();
+            const isCurrent = (myName && entryPlayerName.toLowerCase() === myName) || (newEntry && (
                 (newEntry.id && entry.id && entry.id === newEntry.id) ||
-                (newEntry.name && entry.name === newEntry.name && entry.score === newEntry.score)
-            );
+                (newEntry.name && entryPlayerName.toLowerCase() === newEntry.name.trim().toLowerCase())
+            ));
 
             const tr = document.createElement("tr");
             if (isCurrent) {
                 tr.className = "current-player-rank-row";
+                tr.style.backgroundColor = "rgba(247, 213, 29, 0.22)";
             }
 
             const formattedDate = entry.date || (entry.createdAt ? entry.createdAt.split("T")[0] : "-");
 
             tr.innerHTML = `
                 <td><strong style="color: ${rankNum <= 3 ? '#f7d51d' : '#000'};">${rankMedal}</strong></td>
-                <td><strong>${escapeHtml(entry.name)}</strong>${isCurrent ? ' <span class="badge badge-ready">YOU</span>' : ''}</td>
+                <td>
+                    <strong>${escapeHtml(entryPlayerName)}</strong>
+                    ${isCurrent ? ' <span class="current-player-badge">⭐ YOU</span>' : ''}
+                </td>
                 <td><span style="color: #55b02e; font-weight: bold;">${entry.score}</span></td>
                 <td style="font-size: 8px; color: #555;">${formattedDate}</td>
             `;
@@ -830,16 +1159,28 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (e) {}
 
         const cleanName = (playerName || "FlappyHero").trim().slice(0, 16);
-        const newEntry = {
-            id: "local-" + Date.now(),
-            name: cleanName,
-            score: Number(score) || 0,
-            date: new Date().toISOString().split("T")[0],
-            timestamp: Date.now()
-        };
-        list.push(newEntry);
+        const existingIdx = list.findIndex(e => (e.name || "").toLowerCase() === cleanName.toLowerCase());
+        let newEntry;
+        if (existingIdx >= 0) {
+            if (Number(score) > list[existingIdx].score) {
+                list[existingIdx].score = Number(score) || 0;
+                list[existingIdx].date = new Date().toISOString().split("T")[0];
+                list[existingIdx].timestamp = Date.now();
+            }
+            newEntry = list[existingIdx];
+        } else {
+            newEntry = {
+                id: "local-" + Date.now(),
+                name: cleanName,
+                score: Number(score) || 0,
+                date: new Date().toISOString().split("T")[0],
+                timestamp: Date.now()
+            };
+            list.push(newEntry);
+        }
+
         list.sort((a, b) => b.score - a.score || a.date.localeCompare(b.date));
-        const playerRank = list.findIndex(e => e === newEntry) + 1;
+        const playerRank = list.findIndex(e => (e.name || "").toLowerCase() === cleanName.toLowerCase()) + 1;
         const trimmed = list.slice(0, 10);
         try {
             localStorage.setItem(MOCK_RANK_DB_KEY, JSON.stringify(trimmed));
@@ -971,6 +1312,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function startRankMode() {
+        // 1. Cancel previous game loop and timeouts completely
+        stopGameLoop();
+        rankActiveSessionToken++;
+        if (rankGameOverUiTimeout) {
+            clearTimeout(rankGameOverUiTimeout);
+            rankGameOverUiTimeout = null;
+        }
+        if (rankApiFallbackTimeout) {
+            clearTimeout(rankApiFallbackTimeout);
+            rankApiFallbackTimeout = null;
+        }
+        rankGameOverResolved = false;
+
         window.isRankMode = true;
         window.rankCurrentScore = 0;
         window.currentRankSessionId = null;
@@ -982,15 +1336,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Authoritative Server Session: Notify backend of rank session start
         sendWs("start_rank_session", { playerName: currentName });
-        fetch("/api/rank/start", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ playerName: currentName })
-        }).then(r => r.json()).then(res => {
-            if (res && res.session && !window.currentRankSessionId) {
-                window.currentRankSessionId = res.session.sessionId;
-            }
-        }).catch(() => {});
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            fetch("/api/rank/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ playerName: currentName })
+            }).then(r => r.json()).then(res => {
+                if (res && res.session && !window.currentRankSessionId) {
+                    window.currentRankSessionId = res.session.sessionId;
+                }
+            }).catch(() => {});
+        }
 
         audioManager.playBGM();
 
@@ -1000,8 +1356,9 @@ document.addEventListener("DOMContentLoaded", () => {
         physics.localHeldItem = null;
         updateInventoryUI(null);
 
-        // Hide multiplayer-specific HUD elements
+        // Hide multiplayer-specific HUD elements & DASH
         if (hudInventory) hudInventory.style.display = "none";
+        if (hudDash) hudDash.style.display = "none";
         if (finishTimerBanner) finishTimerBanner.style.display = "none";
         if (hudPipeCount && hudPipeCount.parentElement) hudPipeCount.parentElement.style.display = "none";
         if (hudActivityFeed) hudActivityFeed.innerHTML = "";
@@ -1030,27 +1387,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const currentName = (nameInput && nameInput.value) ? nameInput.value.trim() : "FlappyHero";
         const finalScore = window.rankCurrentScore || 0;
+        const currentToken = rankActiveSessionToken;
+        rankGameOverResolved = false;
 
         // Show immediate transition to results screen with saving indicator
-        setTimeout(() => {
-            showRankResultsUI({
-                isLoading: true,
-                playerRank: "...",
-                leaderboard: []
-            });
+        if (rankGameOverUiTimeout) clearTimeout(rankGameOverUiTimeout);
+        rankGameOverUiTimeout = setTimeout(() => {
+            if (rankActiveSessionToken === currentToken && !gameLoopRunning) {
+                showRankResultsUI({
+                    isLoading: true,
+                    playerRank: "...",
+                    leaderboard: []
+                });
+            }
         }, 400);
 
-        let resolved = false;
-
-        // 1. Authoritative submission directly to backend server (Server -> Supabase)
+        // 1. Authoritative submission directly to backend server via WebSocket (Server -> Supabase)
         const wsSent = sendWs("rank_game_over", {
             sessionId: window.currentRankSessionId,
             score: finalScore,
             playerName: currentName
         });
 
-        // 2. Parallel / Fallback REST API call
+        // 2. REST API submission only as fallback if WS fails or times out
         const submitViaApi = () => {
+            if (rankGameOverResolved || rankActiveSessionToken !== currentToken) return;
             fetch("/api/rank/game-over", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -1062,17 +1423,21 @@ document.addEventListener("DOMContentLoaded", () => {
             })
             .then(res => res.json())
             .then(result => {
-                if (!resolved && result && result.success) {
-                    resolved = true;
-                    showRankResultsUI(result);
+                if (!rankGameOverResolved && rankActiveSessionToken === currentToken && result && result.success) {
+                    rankGameOverResolved = true;
+                    if (!gameLoopRunning) {
+                        showRankResultsUI(result);
+                    }
                 }
             })
             .catch(err => {
                 console.error("[Rank Mode] API submit error:", err);
-                if (!resolved) {
-                    resolved = true;
+                if (!rankGameOverResolved && rankActiveSessionToken === currentToken) {
+                    rankGameOverResolved = true;
                     const fallback = recordRankScoreLocal(currentName, finalScore);
-                    showRankResultsUI(fallback);
+                    if (!gameLoopRunning) {
+                        showRankResultsUI(fallback);
+                    }
                 }
             });
         };
@@ -1081,13 +1446,22 @@ document.addEventListener("DOMContentLoaded", () => {
             submitViaApi();
         } else {
             // Safety timeout: if WebSocket response takes too long, call API fallback
-            setTimeout(() => {
-                if (!resolved) submitViaApi();
-            }, 1200);
+            if (rankApiFallbackTimeout) clearTimeout(rankApiFallbackTimeout);
+            rankApiFallbackTimeout = setTimeout(() => {
+                if (!rankGameOverResolved && rankActiveSessionToken === currentToken) {
+                    submitViaApi();
+                }
+            }, 3000);
         }
     }
 
     function showRankResultsUI(result) {
+        // Prevent kicking the player back to results if they already started a new game!
+        if (gameLoopRunning) {
+            console.log("[Rank Mode] Suppressed showRankResultsUI because active game is running");
+            return;
+        }
+
         showScreen("resultsView");
         updateResultsHostState();
 
@@ -1412,7 +1786,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateInventoryUI(itemType) {
         if (!hudInventory) return;
-        if (currentLobby && currentLobby.mode_id === "flappy_chained") {
+        if (currentLobby && (currentLobby.mode_id === "flappy_chained" || currentLobby.mode_id === "flappy_boss" || currentLobby.mode_id === "flappy_solo")) {
             hudInventory.style.display = "none";
             return;
         }
@@ -1459,6 +1833,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateDashUI() {
         if (!hudDash) return;
+        if (window.isRankMode) {
+            hudDash.style.display = "none";
+            return;
+        }
         const now = Date.now();
         const cdUntil = physics && physics.localDashCooldownUntil;
         if (cdUntil && cdUntil > now) {
@@ -1490,6 +1868,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function handleDashInput() {
+        if (window.isRankMode) return;
         if (!gameLoopRunning) return;
         if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT")) {
             return;
@@ -1526,6 +1905,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.code === "KeyD" || e.key === "d" || e.key === "D" || e.code === "KeyE" || e.key === "e" || e.key === "E") {
+            if (window.isRankMode) return;
             e.preventDefault();
             handleDashInput();
         }
@@ -1591,34 +1971,57 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // 60 FPS Client Game Render & Prediction Loop
+    // 60 FPS Client Game Render & Prediction Loop (Fixed Timestep)
     function startGameLoop() {
+        stopGameLoop(); // Explicitly terminate any pre-existing loops
         applyResponsiveLayout();
         gameLoopRunning = true;
+        if (renderer) renderer.lastFrameTime = performance.now();
+
+        let lastTime = performance.now();
+        let accumulator = 0;
+        const FIXED_TIMESTEP = 1000 / 60; // 16.6667ms (60 FPS fixed physics tick)
 
         function step(now) {
             if (!gameLoopRunning) return;
 
-            physics.updateLocalPhysics();
+            const dt = Math.min(now - lastTime, 100);
+            lastTime = now;
+            accumulator += dt;
 
-            if (window.isRankMode) {
-                if (checkRankCollisions()) {
-                    handleRankGameOver();
-                    return;
+            let updates = 0;
+            while (accumulator >= FIXED_TIMESTEP && updates < 5) {
+                if (!gameLoopRunning) break;
+
+                physics.updateLocalPhysics();
+
+                if (window.isRankMode) {
+                    if (checkRankCollisions()) {
+                        handleRankGameOver();
+                        return;
+                    }
+                    checkRankScoring();
+                    checkRankPipeStream();
+                } else {
+                    physics.updateRemotePlayers();
+                    if (!physics.localHeldItem && (window.localItemPickupCooldownUntil || physics.localItemPickupCooldownUntil)) {
+                        updateInventoryUI(null);
+                    }
+                    updateDashUI();
                 }
-                checkRankScoring();
-                checkRankPipeStream();
-            } else {
-                physics.updateRemotePlayers();
-                if (!physics.localHeldItem && (window.localItemPickupCooldownUntil || physics.localItemPickupCooldownUntil)) {
-                    updateInventoryUI(null);
-                }
-                updateDashUI();
+
+                accumulator -= FIXED_TIMESTEP;
+                updates++;
             }
 
-            renderer.render(now);
+            if (accumulator >= FIXED_TIMESTEP) {
+                accumulator = 0;
+            }
 
-            animationFrameId = requestAnimationFrame(step);
+            if (gameLoopRunning) {
+                renderer.render(now);
+                animationFrameId = requestAnimationFrame(step);
+            }
         }
 
         animationFrameId = requestAnimationFrame(step);
@@ -1706,6 +2109,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             case "match_loading": {
                 stopGameLoop();
+                window.bossVictoryRunActive = false;
+                window.currentBossState = null;
+                if (renderer) renderer.bossState = null;
                 currentLobby = data.lobby;
                 showScreen("loadingScreen");
                 renderer.setGameData(data.maps, data.checkpoints, data.itemBoxes, data.finishLineX, currentLobby.mode_id);
@@ -1751,16 +2157,27 @@ document.addEventListener("DOMContentLoaded", () => {
                         myChainIdx = myPlayer.chain_index;
                     }
                 }
-                const chainedOffset = (currentLobby.mode_id === "flappy_chained") ? (myChainIdx * 60) : 0;
+                let initialX = startX - chainedOffset;
+                if (currentLobby && currentLobby.mode_id === "flappy_boss") {
+                    let myBossIdx = 0;
+                    if (currentLobby.players) {
+                        const pList = Array.isArray(currentLobby.players) ? currentLobby.players : Array.from(currentLobby.players.values ? currentLobby.players.values() : []);
+                        const foundIdx = pList.findIndex(p => p.player_id === localPlayerId);
+                        if (foundIdx >= 0) myBossIdx = foundIdx;
+                    }
+                    initialX = 90 + myBossIdx * 45;
+                }
 
-                physics.resetLocalState(startX - chainedOffset, startY);
+                physics.resetLocalState(initialX, startY);
                 window.localItemPickupCooldownUntil = null;
                 physics.isFrozen = true;
 
                 if (currentLobby && currentLobby.mode_id === "flappy_boss") {
+                    requestLandscapeOrientation();
+                    updateBossOrientationOverlay();
                     if (hudInventory) hudInventory.style.display = "none";
                     if (hudDash) hudDash.style.display = "none";
-                    if (hudBossPanel) hudBossPanel.style.display = "block";
+                    if (hudBossPanel) hudBossPanel.style.display = "none";
                     if (hudPipeCount && hudPipeCount.parentElement) hudPipeCount.parentElement.style.display = "none";
                     if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                     physics.localBossLives = 2;
@@ -1816,17 +2233,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 updateInventoryUI(physics.localHeldItem);
 
                 // Update Boss Mode HUD & Intermission
-                if (data.bossState && hudBossPanel) {
+                if (data.bossState) {
                     renderer.bossState = data.bossState;
-                    hudBossPanel.style.display = "block";
+                    window.currentBossState = data.bossState;
+                    if (data.bossState.status === "victory_run") {
+                        window.bossVictoryRunActive = true;
+                    }
+                    if (hudBossPanel) hudBossPanel.style.display = "none"; // Rendered directly on top bar via Canvas renderBossTopBarHUD()
                     const bs = data.bossState;
-                    if (hudBossName) {
-                        hudBossName.textContent = `BOSS ${bs.bossIndex}/3: ${(bs.name || "BOSS").toUpperCase()}`;
-                    }
-                    if (hudBossHpFill) {
-                        const hpPct = bs.maxHp > 0 ? Math.max(0, Math.min(100, (bs.hp / bs.maxHp) * 100)) : 0;
-                        hudBossHpFill.style.width = `${hpPct}%`;
-                    }
                     if (hudPlayerLives) {
                         if (physics.localIsDeadInBoss) {
                             hudPlayerLives.textContent = `💀 DEAD`;
@@ -1846,6 +2260,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 } else if (renderer.bossState && !data.bossState) {
                     renderer.bossState = null;
+                    window.currentBossState = null;
+                    window.bossVictoryRunActive = false;
                     if (hudBossPanel) hudBossPanel.style.display = "none";
                     if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                 }
@@ -2312,6 +2728,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 audioManager.playSFX("point");
                 if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                 addActivityFeedLog(`🎉 <span style="color: #55b02e; font-weight: bold;">FINAL BOSS SLAIN! FLY TO THE FINISH LINE!</span> 🏁`);
+                window.bossVictoryRunActive = true;
+                if (!window.currentBossState) window.currentBossState = {};
+                window.currentBossState.status = "victory_run";
+                if (renderer) {
+                    if (renderer.bossState) renderer.bossState.status = "victory_run";
+                    if (data.finishLineX) renderer.finishLineX = data.finishLineX;
+                }
+                if (physics && data.finishLineX) {
+                    physics.finishLineX = data.finishLineX;
+                }
                 break;
             }
 
@@ -2323,6 +2749,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             case "match_finished": {
                 stopGameLoop();
+                window.bossVictoryRunActive = false;
+                window.currentBossState = null;
                 finishTimerBanner.style.display = "none";
                 if (hudBossPanel) hudBossPanel.style.display = "none";
                 if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
@@ -2464,7 +2892,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
             case "rank_game_over_result": {
                 console.log("[Rank Mode] Verified results from Supabase:", data);
-                if (window.isRankMode || !currentLobby) {
+                rankGameOverResolved = true;
+                if (rankApiFallbackTimeout) {
+                    clearTimeout(rankApiFallbackTimeout);
+                    rankApiFallbackTimeout = null;
+                }
+                if (!gameLoopRunning && (window.isRankMode || !currentLobby)) {
                     showRankResultsUI(data);
                 }
                 break;
@@ -2493,6 +2926,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     updateWalletUI(data.balance);
                     updateCustomizationUI();
                     if (audioManager) audioManager.playSFX("point");
+                }
+                break;
+            }
+
+            case "auth_signup_response":
+            case "auth_signin_response": {
+                if (typeof window.pendingAuthResolve === "function") {
+                    window.pendingAuthResolve(data);
+                    window.pendingAuthResolve = null;
                 }
                 break;
             }
@@ -2619,5 +3061,21 @@ document.addEventListener("DOMContentLoaded", () => {
     if (pingTracker) updateNetworkIndicatorUI(pingTracker.getStatus());
 
     updateCustomizationUI();
-    fetchUserWallet(window.playerName || (nameInput && nameInput.value) || "FlappyHero");
+
+    // Check saved authentication session or show Auth Screen on initial load
+    let savedSession = null;
+    try {
+        const raw = localStorage.getItem("FLAPPY_AUTH_SESSION");
+        if (raw) savedSession = JSON.parse(raw);
+    } catch (e) {}
+
+    if (savedSession && savedSession.player_name) {
+        applyUserSession(savedSession);
+        showScreen("mainMenu");
+        fetchUserWallet(savedSession.player_name);
+    } else {
+        updateAccountHeaderUI();
+        showScreen("authScreen");
+        switchAuthMode("signin");
+    }
 });

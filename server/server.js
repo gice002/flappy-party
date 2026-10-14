@@ -148,32 +148,65 @@ app.get("/api/player/transactions", async (req, res) => {
     }
 });
 
-// POST /api/auth/register-login - Plain-text login/registration in Login table
+// POST /api/auth/signup - Register new account in Player and Login tables
+app.post("/api/auth/signup", async (req, res) => {
+    try {
+        const { username, password, playerName } = req.body || {};
+        const result = await economyService.signUp(username, password, playerName);
+        res.status(201).json(result);
+    } catch (err) {
+        const isConflict = err.message && err.message.includes("already taken");
+        res.status(isConflict ? 409 : 400).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/auth/signin (and /api/auth/login) - Authenticate existing player
+app.post(["/api/auth/signin", "/api/auth/login"], async (req, res) => {
+    try {
+        const { username, password } = req.body || {};
+        const result = await economyService.signIn(username, password);
+        res.status(200).json(result);
+    } catch (err) {
+        res.status(401).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/auth/me - Retrieve current profile by player_id or username
+app.get("/api/auth/me", async (req, res) => {
+    try {
+        const { player_id, username } = req.query || {};
+        const profile = await economyService.getAuthProfile(player_id, username);
+        if (!profile) {
+            return res.status(404).json({ success: false, error: "Account not found" });
+        }
+        res.status(200).json({ success: true, ...profile });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/auth/register-login - Plain-text login/registration in Login table (Legacy compatibility)
 app.post("/api/auth/register-login", async (req, res) => {
     try {
         const { username, password, playerName } = req.body || {};
         if (!username || !password) {
             return res.status(400).json({ success: false, error: "Username and password required" });
         }
-        const effectiveName = playerName || username;
-        const player = await economyService.getOrCreatePlayer(effectiveName);
-
-        if (economyService.pgPool) {
-            await economyService.pgPool.query(
-                `INSERT INTO public.login (player_id, username, password)
-                 VALUES ($1, $2, $3)
-                 ON CONFLICT (username) DO UPDATE SET password = $3`,
-                [player.player_id, username, password]
-            );
+        // Try sign in first, if user doesn't exist, sign them up!
+        try {
+            const loginRes = await economyService.signIn(username, password);
+            return res.status(200).json(loginRes);
+        } catch (authErr) {
+            if (authErr.message && (authErr.message.includes("Username not found") || authErr.message.includes("Invalid username or password"))) {
+                try {
+                    const signupRes = await economyService.signUp(username, password, playerName);
+                    return res.status(200).json(signupRes);
+                } catch (signupErr) {
+                    throw authErr;
+                }
+            }
+            throw authErr;
         }
-
-        res.status(200).json({
-            success: true,
-            player_id: player.player_id,
-            player_name: player.player_name,
-            balance: player.balance,
-            unlocked_hats: player.unlocked_hats
-        });
     } catch (err) {
         console.error("[API] Error in register-login:", err);
         res.status(500).json({ success: false, error: err.message });

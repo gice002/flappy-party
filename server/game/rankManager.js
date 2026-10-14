@@ -50,6 +50,14 @@ class RankManager {
         let rawScore = Math.max(0, parseInt(score, 10) || 0);
         let verifiedScore = rawScore;
 
+        // Idempotency: Prevent duplicate submissions for the same active session
+        if (session && session.status === "finished") {
+            if (session.cachedResult) {
+                return session.cachedResult;
+            }
+            return { success: true, alreadyFinished: true };
+        }
+
         // Anti-Cheat & Physical Sanity Validation
         if (session && session.startTime) {
             const elapsedSeconds = Math.max(0.1, (Date.now() - session.startTime) / 1000);
@@ -79,6 +87,10 @@ class RankManager {
             result.economy = reward;
         } catch (ecoErr) {
             console.error("[RankManager] Error awarding rank coins:", ecoErr.message);
+        }
+
+        if (session) {
+            session.cachedResult = result;
         }
 
         return result;

@@ -77,5 +77,42 @@
     "swap": "assets/images/items/swap.png",
     "deathnote": "assets/images/items/DeathNote.webp",
     "ice": "assets/images/items/ice.png"
-  }
+  },
+  "bosses": [
+    {
+      "index": 1,
+      "id": "dragon",
+      "name": "Ignis the Fire Dragon",
+      "theme_id": "volcano",
+      "src": "assets/images/bosses/boss1.png"
+    },
+    {
+      "index": 2,
+      "id": "yeti",
+      "name": "Glacius the Frost Yeti",
+      "theme_id": "snowy",
+      "src": "assets/images/bosses/boss2.png"
+    },
+    {
+      "index": 3,
+      "id": "duneboss",
+      "name": "Shai-Khar the Dune Sandworm",
+      "theme_id": "desert",
+      "src": "assets/images/bosses/boss3.png"
+    },
+    {
+      "index": 4,
+      "id": "candyboss",
+      "name": "Grizelda the Candy Witch",
+      "theme_id": "candyland",
+      "src": "assets/images/bosses/boss4.png"
+    },
+    {
+      "index": 5,
+      "id": "waterboss",
+      "name": "Leviathan the Abyssal Terror",
+      "theme_id": "new_underwater_map",
+      "src": "assets/images/bosses/boss5.png"
+    }
+  ]
 }

@@ -10,10 +10,88 @@
 
     <div id="app-container">
 
-        <!-- SCREEN 1: MAIN MENU & LOBBY REGISTRATION (UC-1, 2, 3) -->
+        <!-- SCREEN 0: LOGIN & SIGN UP (AUTH SYSTEM) -->
+        <div id="screen-auth" class="screen">
+            <div class="card card-portrait auth-card">
+                <div class="auth-header" style="text-align: center; margin-bottom: 12px;">
+                    <div class="preview-bird" style="margin: 0 auto 10px; width: 48px; height: 36px; display: flex; align-items: center; justify-content: center; background: transparent; border: none;">
+                        <img src="assets/images/flappybird0.png" style="width: 38px; height: 26px; object-fit: contain;" alt="Bird" />
+                    </div>
+                    <h1 class="game-title" style="font-size: 16px; margin-bottom: 4px;">FLAPPY BIRD</h1>
+                    <div id="auth-subtitle" style="font-size: 8px; color: #f7d51d; text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;">
+                        ACCOUNT AUTHENTICATION
+                    </div>
+                </div>
+
+                <!-- Tab Switcher (Sign In vs Sign Up) -->
+                <div class="auth-tab-bar" style="display: flex; gap: 8px; margin-bottom: 14px;">
+                    <button type="button" class="btn btn-touch-action auth-tab active" id="tab-auth-signin" style="flex: 1; font-size: 8.5px; padding: 10px 4px;">
+                        🔑 SIGN IN
+                    </button>
+                    <button type="button" class="btn btn-touch-action auth-tab" id="tab-auth-signup" style="flex: 1; font-size: 8.5px; padding: 10px 4px; background: #34495e;">
+                        ✨ SIGN UP
+                    </button>
+                </div>
+
+                <!-- Form Alert Messages -->
+                <div id="auth-error-msg" style="display: none; background: rgba(231, 76, 60, 0.25); border: 2px solid #e74c3c; border-radius: 6px; padding: 8px 10px; color: #ff6b6b; font-size: 7.5px; line-height: 1.4; margin-bottom: 12px; text-align: center;"></div>
+                <div id="auth-success-msg" style="display: none; background: rgba(46, 204, 113, 0.25); border: 2px solid #2ecc71; border-radius: 6px; padding: 8px 10px; color: #2ecc71; font-size: 7.5px; line-height: 1.4; margin-bottom: 12px; text-align: center;"></div>
+
+                <!-- Auth Form -->
+                <form id="form-auth" onsubmit="return false;" style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <!-- Field: Username -->
+                    <div class="input-group" style="margin-bottom: 0;">
+                        <label for="input-auth-username">👤 USERNAME</label>
+                        <input type="text" id="input-auth-username" placeholder="Enter username..." maxlength="20" autocomplete="username" required>
+                    </div>
+
+                    <!-- Field: Password (Plain Text) -->
+                    <div class="input-group" style="margin-bottom: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <label for="input-auth-password" style="margin-bottom: 0;">🔒 PASSWORD</label>
+                            <span style="font-size: 6.5px; color: #f7d51d;">[PLAIN TEXT]</span>
+                        </div>
+                        <input type="text" id="input-auth-password" placeholder="Enter password..." maxlength="30" autocomplete="current-password" required>
+                    </div>
+
+                    <!-- Field: Player Name (Sign Up only) -->
+                    <div class="input-group" id="group-auth-playername" style="margin-bottom: 0; display: none;">
+                        <label for="input-auth-playername">🎮 IN-GAME NAME</label>
+                        <input type="text" id="input-auth-playername" placeholder="Display name (e.g. FlappyHero)..." maxlength="12" autocomplete="nickname">
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" class="btn btn-primary btn-touch-action" id="btn-auth-submit" style="margin-top: 6px; width: 100%;">
+                        ▶ SIGN IN
+                    </button>
+                </form>
+
+                <!-- Guest Play / Skip Option -->
+                <div style="margin-top: 14px; border-top: 1px dashed rgba(255,255,255,0.25); padding-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                    <button type="button" class="btn btn-secondary btn-touch-action" id="btn-auth-guest" style="width: 100%; font-size: 8px;">
+                        👤 PLAY AS GUEST (SKIP)
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- SCREEN 1: MAIN MENU & LOBBY REGISTRATION (PORTRAIT REVAMP) -->
         <div id="screen-main-menu" class="screen active">
             <div class="card card-portrait main-menu-card">
+                <!-- Account Status & Switch/Login Button -->
+                <div id="account-status-bar" style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.5); border: 2px solid #3a506b; border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; box-sizing: border-box;">
+                    <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; flex: 1;">
+                        <span id="account-status-icon" style="font-size: 13px;">👤</span>
+                        <div style="display: flex; flex-direction: column; overflow: hidden;">
+                            <span id="account-status-name" style="font-size: 8px; color: #f7d51d; font-weight: bold; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">Guest Player</span>
+                            <span id="account-status-sub" style="font-size: 6.5px; color: #aaa; white-space: nowrap;">Not logged in</span>
+                        </div>
+                    </div>
+                    <button id="btn-header-auth" class="btn btn-small btn-secondary" style="font-size: 7px; padding: 4px 8px; min-width: 65px; border-radius: 4px;">
+                        🔑 LOGIN
+                    </button>
+                </div>
+
                 <!-- TOP: Player Name Input & Wallet Balance Badge -->
                 <div class="top-name-wallet-container" style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 12px;">
                     <div class="input-group top-name-input-group" style="flex: 1; margin-bottom: 0;">
@@ -252,6 +330,22 @@
                         <span id="dash-cooldown-overlay" class="dash-cooldown-overlay"></span>
                     </div>
                     <div class="dash-fab-hint" id="dash-fab-hint">SHIFT / D</div>
+                </div>
+            </div>
+
+            <!-- Mobile Landscape Required Overlay for Boss Mode -->
+            <div id="boss-orientation-overlay" class="boss-orientation-overlay" style="display: none;">
+                <div class="boss-orientation-card">
+                    <div class="rotate-phone-anim">
+                        <div class="phone-body">
+                            <div class="phone-screen-inner">
+                                <span class="phone-icon-bird">🐦</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="boss-orientation-title">PLEASE ROTATE TO LANDSCAPE</div>
+                    <div class="boss-orientation-thai">กรุณาหมุนโทรศัพท์เป็นแนวนอน</div>
+                    <div class="boss-orientation-desc">Boss Mode is designed for Landscape Play</div>
                 </div>
             </div>
         </div>

@@ -70,7 +70,7 @@ class GameEngine {
         if (this.lobby.mode_id === "flappy_boss") {
             let pIdx = 0;
             for (let player of this.lobby.players.values()) {
-                const fixedX = 60 + pIdx * 25;
+                const fixedX = 90 + pIdx * 45; // Positioned comfortably on the left side of the arena
                 player.resetForMatch(fixedX, 300, this.lobby.startCheckpointId);
                 this.inputQueues.set(player.player_id, []);
                 pIdx++;
@@ -207,7 +207,7 @@ class GameEngine {
                     if (!player.isKnockedDown && !player.isFrozenInIce && !player.is_finished && player.is_alive && !player.isDeadInBoss) {
                         if (!player.dashCooldownUntil || now >= player.dashCooldownUntil) {
                             player.dashCooldownUntil = now + DASH_COOLDOWN_MS;
-                            if (this.lobby.mode_id !== "flappy_boss") {
+                            if (this.lobby.mode_id !== "flappy_boss" || (this.bossManager && this.bossManager.status === "victory_run")) {
                                 player.x += DASH_BURST_X;
                             }
                             player.velocityY = Math.min(player.velocityY, -1.5);
@@ -285,10 +285,18 @@ class GameEngine {
             // Boss Mode Phase 3: Check finish line during victory run
             if (this.bossManager && this.bossManager.status === "victory_run") {
                 for (let player of this.lobby.players.values()) {
-                    if (player.x >= this.lobby.finishLineX && !player.is_finished) {
+                    if (this.lobby.finishLineX > 0 && player.x >= this.lobby.finishLineX && !player.is_finished) {
                         player.is_finished = true;
                         const elapsedSec = ((now - this.lobby.matchStartTime) / 1000).toFixed(2);
                         player.finish_time = elapsedSec + "s";
+
+                        // Start 10-second finish countdown once the first player finishes
+                        if (this.lobby.finishTimerStart === null) {
+                            this.lobby.finishTimerStart = now;
+                            this.broadcast("finish_timer_started", {
+                                countdownSeconds: 10
+                            });
+                        }
                     }
                 }
             }
@@ -306,7 +314,7 @@ class GameEngine {
             }
 
             if (remaining <= 0 || allFinished) {
-                this.endMatch();
+                this.endMatch(this.lobby.mode_id === "flappy_boss" ? true : undefined);
                 return;
             }
         }
