@@ -65,7 +65,8 @@
     }
   ],
   "items": {
-    "box": "assets/images/items/item_box.svg",
+    "box": "assets/images/items/lucky_block.png",
+    "lucky_block": "assets/images/items/lucky_block.png",
     "ink": "assets/images/items/bucket.png",
     "curse": "assets/images/items/Slowness_JE4.png",
     "shield": "assets/images/items/Absorption_JE3_BE3.png",

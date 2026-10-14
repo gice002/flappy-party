@@ -60,51 +60,6 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
         for (let i = 1; i <= 10; i++) {
             pipeIndexCounter++;
 
-            if (i === 10) {
-                const respawnX = currentX + Math.floor(pipeSpacingX / 2);
-                const respawnY = 320;
-
-                if (isFinalMap) {
-                    // On the final map, slot 10 is the clean Finish Line Zone (NO checkpoints or item boxes)
-                    computedFinishLineX = respawnX;
-                } else {
-                    // Intermediate map Checkpoint Zone
-                    if (modeId !== "flappy_chained") {
-                        const preChkItemX = respawnX - 140;
-                        for (let boxIdx = 0; boxIdx < 6; boxIdx++) {
-                            const boxY = 160 + (boxIdx * 40);
-
-                            itemXList.push(preChkItemX);
-                            itemYList.push(boxY);
-
-                            itemBoxes.push({
-                                id: `item_${lobbyId}_chk_pre_${m}_${boxIdx}`,
-                                x: preChkItemX,
-                                y: boxY,
-                                width: 32,
-                                height: 32,
-                                collected: false,
-                                isActive: true,
-                                collectedBy: null
-                            });
-                        }
-                    }
-
-                    const checkpointObj = new Checkpoint(
-                        checkpointId,
-                        mapId,
-                        respawnX,
-                        respawnY,
-                        pipeIndexCounter
-                    );
-                    checkpoints.set(checkpointId, checkpointObj);
-                }
-
-                // Expand Zone spacing to PIPE_SPACING_X * 2 (760px)
-                currentX += pipeSpacingX * 2;
-                continue;
-            }
-
             // Dynamic Y-Axis Gap Randomization per pipe
             const gapSize = Math.floor(Math.random() * (MAX_GAP - MIN_GAP + 1)) + MIN_GAP;
 
@@ -130,8 +85,8 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
                 gapSize: gapSize
             });
 
-            // 2. Item Spawning: Items MUST ONLY spawn in "flappy_race" mode
-            if (modeId !== "flappy_chained" && (i === 2 || i === 4 || i === 7 || i === 9)) {
+            // 2. Item Spawning: Spawn Lucky Blocks at pipes 2, 4, 7, 9
+            if (i === 2 || i === 4 || i === 7 || i === 9) {
                 const itemX = currentX + Math.floor(pipeSpacingX / 2);
                 const centerGapY = topY + pipeHeight + Math.floor(gapSize / 2);
 
@@ -156,6 +111,47 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
 
             currentX += pipeSpacingX;
         }
+
+        // Zone placed after the 10th pipe
+        const respawnX = currentX + Math.floor(pipeSpacingX / 2);
+        const respawnY = 320;
+
+        if (isFinalMap) {
+            // On the final map, after pipe 10 is the clean Finish Line Zone (NO item boxes)
+            computedFinishLineX = respawnX;
+        } else {
+            // Intermediate map Checkpoint Zone: spawn pre-checkpoint item boxes
+            const preChkItemX = respawnX - 140;
+            for (let boxIdx = 0; boxIdx < 6; boxIdx++) {
+                const boxY = 160 + (boxIdx * 40);
+
+                    itemXList.push(preChkItemX);
+                    itemYList.push(boxY);
+
+                    itemBoxes.push({
+                        id: `item_${lobbyId}_chk_pre_${m}_${boxIdx}`,
+                        x: preChkItemX,
+                        y: boxY,
+                        width: 32,
+                        height: 32,
+                        collected: false,
+                        isActive: true,
+                        collectedBy: null
+                    });
+            }
+        }
+
+        const checkpointObj = new Checkpoint(
+            checkpointId,
+            mapId,
+            respawnX,
+            respawnY,
+            pipeIndexCounter
+        );
+        checkpoints.set(checkpointId, checkpointObj);
+
+        // Expand Zone spacing to PIPE_SPACING_X * 2 (760px) before next map
+        currentX += pipeSpacingX * 2;
 
         const mapObj = new MapData(
             mapId,

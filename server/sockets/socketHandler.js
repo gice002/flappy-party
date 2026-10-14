@@ -22,7 +22,7 @@ function initSocketHandler(wss, clients, lobbyManager) {
                 "create_lobby", "join_lobby", "leave_lobby", "kick_player",
                 "update_customization", "toggle_ready", "update_lobby_settings",
                 "start_match", "play_again", "send_chat_message", "player_input",
-                "return_to_lobby", "use_item", "client_ready"
+                "return_to_lobby", "use_item", "client_ready", "player_dash"
             ];
 
             events.forEach(eventName => {
@@ -31,6 +31,13 @@ function initSocketHandler(wss, clients, lobbyManager) {
                     if (typeof lobbyManager[camelMethod] === "function") {
                         lobbyManager[camelMethod](socket, data);
                     }
+                });
+            });
+
+            socket.on("network_ping", (data) => {
+                socket.emit("network_pong", {
+                    id: (data && data.id) !== undefined ? data.id : null,
+                    clientTime: (data && data.clientTime) !== undefined ? data.clientTime : 0
                 });
             });
 
@@ -132,8 +139,22 @@ function initSocketHandler(wss, clients, lobbyManager) {
                 case "use_item":
                     lobbyManager.useItem(ws);
                     break;
+                case "player_dash":
+                    lobbyManager.handlePlayerDash(ws);
+                    break;
                 case "client_ready":
                     lobbyManager.clientReady(ws);
+                    break;
+                case "network_ping":
+                    if (ws.readyState === 1) { // 1 === WebSocket.OPEN
+                        ws.send(JSON.stringify({
+                            type: "network_pong",
+                            data: {
+                                id: (data && data.id) !== undefined ? data.id : null,
+                                clientTime: (data && data.clientTime) !== undefined ? data.clientTime : 0
+                            }
+                        }));
+                    }
                     break;
                 default:
                     console.warn(`[WebSocket] Unknown event type: ${type}`);

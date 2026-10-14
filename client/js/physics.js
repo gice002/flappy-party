@@ -26,7 +26,18 @@ class PhysicsEngine {
         this.localSpeedMultiplier = 1.0;
         this.localHasShield = false;
         this.localIsInvincible = false;
+        this.localInvincibleUntil = null;
+        this.localIsKnockedDown = false;
+        this.localKnockdownUntil = null;
+        this.localIsReadyToFly = false;
+        this.localKnockdownPhase = "none"; // "none" | "falling" | "grounded"
+        this.knockdownBounceVx = 0;
+        this.knockdownBounceCount = 0;
         this.localHeldItem = null;
+        this.localItemPickupCooldownUntil = null;
+        this.localDashCooldownUntil = null;
+        this.localChainIndex = 0;
+        this.lastSnapshotTick = 0;
     }
 
     setLocalPlayerId(id) {
@@ -51,13 +62,109 @@ class PhysicsEngine {
         this.localSpeedMultiplier = 1.0;
         this.localHasShield = false;
         this.localIsInvincible = false;
+        this.localInvincibleUntil = null;
+        this.localIsKnockedDown = false;
+        this.localKnockdownUntil = null;
+        this.localIsReadyToFly = false;
+        this.localKnockdownPhase = "none";
+        this.knockdownBounceVx = 0;
+        this.knockdownBounceCount = 0;
         this.localHeldItem = null;
+        this.localItemPickupCooldownUntil = null;
+        this.localDashCooldownUntil = null;
+        this.localChainIndex = 0;
+        this.lastSnapshotTick = 0;
         this.clearRemotePlayers(); // Enforce strict state wipe on local reset
+    }
+
+    // Trigger local knockdown animation with backward bounce and gravity drop
+    triggerKnockdown(originX, originY, durationMs = 5000) {
+        this.localIsKnockedDown = true;
+        this.localKnockdownUntil = Date.now() + durationMs;
+        this.localIsReadyToFly = false;
+        this.knockdownBounceCount = 0;
+
+        if (originX !== undefined && originX !== null) {
+            this.predictedState.x = originX;
+        }
+        if (originY !== undefined && originY !== null && originY < (this.groundY - this.birdHeight)) {
+            this.predictedState.y = originY;
+        }
+
+        const targetGroundY = this.groundY - this.birdHeight; // 592
+        if (this.predictedState.y >= targetGroundY - 6) {
+            this.predictedState.y = targetGroundY;
+            this.predictedState.velocityY = -2.5; // Small ground bounce
+            this.knockdownBounceVx = -1.5;
+            this.localKnockdownPhase = "falling";
+        } else {
+            // Mid-air bounce upward and backward
+            this.predictedState.velocityY = -4.5;
+            this.knockdownBounceVx = -2.5;
+            this.localKnockdownPhase = "falling";
+        }
+    }
+
+    // Trigger remote player knockdown animation with backward bounce and gravity drop
+    triggerRemoteKnockdown(playerId, originX, originY, durationMs = 5000) {
+        const remote = this.remotePlayers.get(playerId);
+        if (!remote) return;
+        remote.isKnockedDown = true;
+        remote.knockdownUntil = Date.now() + durationMs;
+        remote.isReadyToFly = false;
+        remote.knockdownBounceCount = 0;
+
+        if (originX !== undefined && originX !== null) remote.x = originX;
+        if (originY !== undefined && originY !== null && originY < (this.groundY - this.birdHeight)) {
+            remote.y = originY;
+        }
+
+        const targetGroundY = this.groundY - this.birdHeight;
+        if (remote.y >= targetGroundY - 6) {
+            remote.y = targetGroundY;
+            remote.velocityY = -2.5;
+            remote.knockdownVx = -1.5;
+            remote.knockdownPhase = "falling";
+        } else {
+            remote.velocityY = -4.5;
+            remote.knockdownVx = -2.5;
+            remote.knockdownPhase = "falling";
+        }
     }
 
     // Process local jump input instantly for zero latency
     handleLocalJump() {
         if (this.isFrozen || this.localIsFinished || this.localIsFrozenInIce) return null;
+
+        if (this.localIsKnockedDown) {
+            const now = Date.now();
+            const isReady = this.localIsReadyToFly || (this.localKnockdownUntil && now >= this.localKnockdownUntil);
+            if (!isReady) {
+                // Ignore jump input while knocked down before 5 seconds
+                return null;
+            }
+            // Recovery Jump!
+            this.localIsKnockedDown = false;
+            this.localIsReadyToFly = false;
+            this.localKnockdownUntil = null;
+            this.localIsInvincible = true;
+            this.localInvincibleUntil = now + 4000;
+            this.predictedState.velocityY = this.jumpVelocity;
+
+            if (typeof window !== "undefined" && typeof window.onPlayerFlap === "function") {
+                window.onPlayerFlap(this.predictedState.x, this.predictedState.y, window.playerSkinId || 0, true);
+            }
+
+            this.inputSequence++;
+            const input = {
+                sequence: this.inputSequence,
+                action: "jump",
+                timestamp: now
+            };
+            this.pendingInputs.push(input);
+            return input;
+        }
+
         this.inputSequence++;
         const input = {
             sequence: this.inputSequence,
@@ -68,7 +175,32 @@ class PhysicsEngine {
         // Apply instant jump locally
         this.predictedState.velocityY = this.jumpVelocity;
         
+        if (typeof window !== "undefined" && typeof window.onPlayerFlap === "function") {
+            window.onPlayerFlap(this.predictedState.x, this.predictedState.y, window.playerSkinId || 0, true);
+        }
+
         // Queue input for reconciliation
+        this.pendingInputs.push(input);
+
+        return input;
+    }
+
+    // Process local dash input instantly with cooldown check
+    handleLocalDash() {
+        if (this.isFrozen || this.localIsFinished || this.localIsFrozenInIce || this.localIsKnockedDown) return null;
+        const now = Date.now();
+        if (this.localDashCooldownUntil && now < this.localDashCooldownUntil) return null;
+
+        this.localDashCooldownUntil = now + 3500;
+        this.predictedState.x += 65;
+        this.predictedState.velocityY = Math.min(this.predictedState.velocityY, -1.5);
+
+        this.inputSequence++;
+        const input = {
+            sequence: this.inputSequence,
+            action: "dash",
+            timestamp: now
+        };
         this.pendingInputs.push(input);
 
         return input;
@@ -80,10 +212,79 @@ class PhysicsEngine {
             this.predictedState.velocityY = 0;
             return;
         }
+
+        // Local check for invincibility expiration
+        if (this.localIsInvincible && this.localInvincibleUntil && Date.now() >= this.localInvincibleUntil) {
+            this.localIsInvincible = false;
+            this.localInvincibleUntil = null;
+        }
+
+        if (this.localIsKnockedDown) {
+            if (this.localKnockdownUntil && Date.now() >= this.localKnockdownUntil) {
+                this.localIsReadyToFly = true;
+            }
+
+            if (this.localKnockdownPhase === "falling") {
+                this.predictedState.x += this.knockdownBounceVx;
+                this.knockdownBounceVx *= 0.88;
+
+                this.predictedState.velocityY += this.gravity * 1.4;
+                this.predictedState.y += this.predictedState.velocityY;
+
+                const targetGroundY = this.groundY - this.birdHeight; // 592
+                if (this.predictedState.y >= targetGroundY) {
+                    this.predictedState.y = targetGroundY;
+                    if (this.knockdownBounceCount === 0 && Math.abs(this.predictedState.velocityY) > 2.0) {
+                        this.predictedState.velocityY = -1.8;
+                        this.knockdownBounceCount++;
+                        if (typeof window !== "undefined" && typeof window.onGroundImpact === "function") {
+                            window.onGroundImpact(this.predictedState.x, targetGroundY, true);
+                        }
+                    } else {
+                        this.predictedState.velocityY = 0;
+                        this.knockdownBounceVx = 0;
+                        this.localKnockdownPhase = "grounded";
+                        if (typeof window !== "undefined" && typeof window.onGroundImpact === "function") {
+                            window.onGroundImpact(this.predictedState.x, targetGroundY, true);
+                        }
+                    }
+                }
+            } else {
+                this.predictedState.y = this.groundY - this.birdHeight;
+                this.predictedState.velocityY = 0;
+                this.knockdownBounceVx = 0;
+            }
+            return;
+        }
+
         const speedMult = (this.localSpeedMultiplier !== undefined && this.localSpeedMultiplier !== null) ? this.localSpeedMultiplier : 1.0;
         this.predictedState.x += this.forwardVelocity * speedMult;
         this.predictedState.velocityY += this.gravity;
         this.predictedState.y = Math.max(0, this.predictedState.y + this.predictedState.velocityY);
+
+        // Apply client-side predicted tether constraint with adjacent chained partners
+        if (typeof window !== "undefined" && window.currentLobby && window.currentLobby.mode_id === "flappy_chained") {
+            const localChainIdx = this.localChainIndex || 0;
+            for (let remote of this.remotePlayers.values()) {
+                if (remote.is_finished || remote.isKnockedDown) continue;
+                const rIdx = remote.chain_index !== undefined ? remote.chain_index : 0;
+                if (Math.abs(rIdx - localChainIdx) === 1) {
+                    const dx = remote.x - this.predictedState.x;
+                    const dy = remote.y - this.predictedState.y;
+                    const dist = Math.hypot(dx, dy);
+                    const MAX_TETHER = 110;
+                    if (dist > MAX_TETHER && dist > 0.0001) {
+                        const stretch = dist - MAX_TETHER;
+                        const force = Math.min(stretch * 0.18, 8);
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        this.predictedState.x += nx * force * 0.5;
+                        this.predictedState.y += ny * force * 0.5;
+                        this.predictedState.velocityY += ny * force * 0.15;
+                    }
+                }
+            }
+        }
 
         // Ground limit
         if (this.predictedState.y + this.birdHeight > this.groundY) {
@@ -96,8 +297,12 @@ class PhysicsEngine {
     reconcileServerSnapshot(snapshot) {
         if (!snapshot || !snapshot.players) return;
 
-        if (!this.localPlayerId && typeof window !== "undefined" && window.socket && window.socket.id) {
-            this.localPlayerId = window.socket.id;
+        // Out-of-order snapshot protection (e.g. from network latency/jitter simulation)
+        if (snapshot.tick !== undefined && snapshot.tick !== null) {
+            if (this.lastSnapshotTick && snapshot.tick < this.lastSnapshotTick) {
+                return; // Discard outdated snapshot
+            }
+            this.lastSnapshotTick = snapshot.tick;
         }
 
         // Build active player ID set from snapshot to prune disconnected / stale ghosts
@@ -111,17 +316,52 @@ class PhysicsEngine {
 
         for (let serverPlayer of snapshot.players) {
             if (serverPlayer.player_id === this.localPlayerId) {
+                const hadShield = this.localHasShield;
+                const wasFrozen = this.localIsFrozenInIce;
+
                 this.localHasShield = serverPlayer.hasShield || false;
                 this.localIsInvincible = serverPlayer.isInvincible || false;
+                this.localInvincibleUntil = serverPlayer.invincibleUntil || null;
+                this.localIsKnockedDown = serverPlayer.isKnockedDown || false;
+                this.localKnockdownUntil = serverPlayer.knockdownUntil || null;
+                this.localIsReadyToFly = serverPlayer.isReadyToFly || false;
                 this.localHeldItem = serverPlayer.heldItem || null;
+                this.localItemPickupCooldownUntil = serverPlayer.itemPickupCooldownUntil || null;
+                this.localDashCooldownUntil = serverPlayer.dashCooldownUntil || null;
+                this.localChainIndex = serverPlayer.chain_index !== undefined ? serverPlayer.chain_index : 0;
                 this.localSpeedMultiplier = (serverPlayer.speedMultiplier !== undefined && serverPlayer.speedMultiplier !== null) ? serverPlayer.speedMultiplier : 1.0;
                 this.localIsFinished = serverPlayer.is_finished || false;
                 this.localIsFrozenInIce = serverPlayer.isFrozenInIce || false;
                 this.localIsBucketHead = serverPlayer.isBucketHead || false;
 
+                // Detect status transition triggers for local player
+                if (hadShield && !this.localHasShield) {
+                    if (typeof window !== "undefined" && typeof window.onShieldBreak === "function") {
+                        window.onShieldBreak(this.predictedState.x, this.predictedState.y);
+                    }
+                }
+                if (wasFrozen && !this.localIsFrozenInIce) {
+                    if (typeof window !== "undefined" && typeof window.onIceShatter === "function") {
+                        window.onIceShatter(this.predictedState.x, this.predictedState.y);
+                    }
+                }
+
                 if (this.localIsFinished) {
                     this.predictedState.x = serverPlayer.x;
                     this.predictedState.y = serverPlayer.y;
+                    this.predictedState.velocityY = 0;
+                    this.pendingInputs = [];
+                    continue;
+                }
+
+                if (this.localIsKnockedDown) {
+                    if (this.localKnockdownPhase === "falling") {
+                        // Let local falling animation proceed smoothly
+                        this.pendingInputs = [];
+                        continue;
+                    }
+                    this.predictedState.x = serverPlayer.x;
+                    this.predictedState.y = this.groundY - this.birdHeight;
                     this.predictedState.velocityY = 0;
                     this.pendingInputs = [];
                     continue;
@@ -150,6 +390,9 @@ class PhysicsEngine {
                 for (let input of this.pendingInputs) {
                     if (input.action === "jump") {
                         reconciledVY = this.jumpVelocity;
+                    } else if (input.action === "dash") {
+                        reconciledX += 65;
+                        reconciledVY = Math.min(reconciledVY, -1.5);
                     }
                     reconciledX += this.forwardVelocity * speedMult;
                     reconciledVY += this.gravity;
@@ -190,13 +433,32 @@ class PhysicsEngine {
                         chain_index: serverPlayer.chain_index,
                         hasShield: serverPlayer.hasShield,
                         isInvincible: serverPlayer.isInvincible,
+                        invincibleUntil: serverPlayer.invincibleUntil,
+                        isKnockedDown: serverPlayer.isKnockedDown,
+                        knockdownUntil: serverPlayer.knockdownUntil,
+                        isReadyToFly: serverPlayer.isReadyToFly,
+                        knockdownPhase: serverPlayer.isKnockedDown ? "grounded" : "none",
                         isBucketHead: serverPlayer.isBucketHead,
                         isFrozenInIce: serverPlayer.isFrozenInIce,
                         heldItem: serverPlayer.heldItem,
+                        dashCooldownUntil: serverPlayer.dashCooldownUntil || null,
                         speedMultiplier: serverPlayer.speedMultiplier
                     };
                     this.remotePlayers.set(serverPlayer.player_id, remote);
                 } else {
+                    if (!remote.isKnockedDown && serverPlayer.isKnockedDown) {
+                        this.triggerRemoteKnockdown(serverPlayer.player_id, remote.x, remote.y, 5000);
+                    }
+                    if (remote.hasShield && !serverPlayer.hasShield) {
+                        if (typeof window !== "undefined" && typeof window.onShieldBreak === "function") {
+                            window.onShieldBreak(remote.x, remote.y);
+                        }
+                    }
+                    if (remote.isFrozenInIce && !serverPlayer.isFrozenInIce) {
+                        if (typeof window !== "undefined" && typeof window.onIceShatter === "function") {
+                            window.onIceShatter(remote.x, remote.y);
+                        }
+                    }
                     remote.name = serverPlayer.name;
                     remote.skin_ID = serverPlayer.skin_ID;
                     remote.hat_ID = serverPlayer.hat_ID;
@@ -206,8 +468,13 @@ class PhysicsEngine {
                     remote.is_finished = serverPlayer.is_finished;
                     remote.finish_time = serverPlayer.finish_time;
                     remote.chain_index = serverPlayer.chain_index;
+                    remote.dashCooldownUntil = serverPlayer.dashCooldownUntil || null;
                     remote.hasShield = serverPlayer.hasShield;
                     remote.isInvincible = serverPlayer.isInvincible;
+                    remote.invincibleUntil = serverPlayer.invincibleUntil;
+                    remote.isKnockedDown = serverPlayer.isKnockedDown;
+                    remote.knockdownUntil = serverPlayer.knockdownUntil;
+                    remote.isReadyToFly = serverPlayer.isReadyToFly;
                     remote.isBucketHead = serverPlayer.isBucketHead;
                     remote.isFrozenInIce = serverPlayer.isFrozenInIce;
                     remote.heldItem = serverPlayer.heldItem;
@@ -225,7 +492,44 @@ class PhysicsEngine {
                 remote.x = remote.targetX;
                 remote.y = remote.targetY;
                 remote.velocityY = 0;
+            } else if (remote.isKnockedDown) {
+                if (remote.knockdownPhase === "falling") {
+                    remote.x += remote.knockdownVx || 0;
+                    remote.knockdownVx = (remote.knockdownVx || 0) * 0.88;
+                    remote.velocityY = (remote.velocityY || 0) + this.gravity * 1.4;
+                    remote.y += remote.velocityY;
+                    const targetGroundY = this.groundY - this.birdHeight;
+                    if (remote.y >= targetGroundY) {
+                        remote.y = targetGroundY;
+                        if ((remote.knockdownBounceCount || 0) === 0 && Math.abs(remote.velocityY) > 2.0) {
+                            remote.velocityY = -1.8;
+                            remote.knockdownBounceCount = 1;
+                            if (typeof window !== "undefined" && typeof window.onGroundImpact === "function") {
+                                window.onGroundImpact(remote.x, targetGroundY, false);
+                            }
+                        } else {
+                            remote.velocityY = 0;
+                            remote.knockdownVx = 0;
+                            remote.knockdownPhase = "grounded";
+                            if (typeof window !== "undefined" && typeof window.onGroundImpact === "function") {
+                                window.onGroundImpact(remote.x, targetGroundY, false);
+                            }
+                        }
+                    }
+                } else {
+                    remote.y = this.groundY - this.birdHeight;
+                    remote.velocityY = 0;
+                    remote.x = remote.targetX;
+                }
             } else {
+                // Detect remote flap (jump impulse)
+                if (remote.targetVelocityY <= -4.5 && (remote.lastVy === undefined || remote.lastVy > -3.0)) {
+                    if (typeof window !== "undefined" && typeof window.onPlayerFlap === "function") {
+                        window.onPlayerFlap(remote.x, remote.y, remote.skin_ID || 0, false);
+                    }
+                }
+                remote.lastVy = remote.targetVelocityY;
+
                 // Smooth frame-by-frame Lerp towards target server coordinates
                 remote.x += (remote.targetX - remote.x) * lerpFactor;
                 remote.y += (remote.targetY - remote.y) * lerpFactor;

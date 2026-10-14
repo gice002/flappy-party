@@ -73,13 +73,16 @@ p1.x = 200;
 p2.x = 800;
 p1.heldItem = "deathnote";
 lm.useItem(mockSocket1);
-// P2 (1st place) should be reset to chk_2 respawnX (500)
-assert.strictEqual(p2.x, 500);
+// P2 (1st place) should be knocked down to ground (y=592)
+assert.strictEqual(p2.isKnockedDown, true);
+assert.strictEqual(p2.y, 592);
 const announcement = emittedEvents.find(e => e.evt === "deathnote_announcement");
 assert.ok(announcement);
+assert.strictEqual(announcement.payload.attackerId, "p1");
 assert.strictEqual(announcement.payload.attackerName, "Player1");
+assert.strictEqual(announcement.payload.targetId, "p2");
 assert.strictEqual(announcement.payload.targetName, "Player2");
-console.log("-> Test 5: Death Note respawn & announcement banner verified!");
+console.log("-> Test 5: Death Note knockdown & targeted announcement banner verified!");
 
 // Test Ice Freeze
 p1.x = 200;

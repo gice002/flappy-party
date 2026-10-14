@@ -11,18 +11,50 @@
     <div id="app-container">
 
         <!-- SCREEN 1: MAIN MENU & LOBBY REGISTRATION (UC-1, 2, 3) -->
+        <!-- SCREEN 1: MAIN MENU & LOBBY REGISTRATION (PORTRAIT REVAMP) -->
         <div id="screen-main-menu" class="screen active">
-            <div class="card">
-                <h1 class="game-title">FLAPPY BIRD<br>ONLINE</h1>
-                
-                <div class="input-group">
-                    <label for="input-player-name">PLAYER NAME</label>
-                    <input type="text" id="input-player-name" placeholder="Enter your name..." maxlength="12" value="FlappyHero">
+            <div class="card card-portrait main-menu-card">
+                <!-- TOP: Player Name Input (Prominently Accessible at Top) -->
+                <div class="input-group top-name-input-group">
+                    <label for="input-player-name">👤 PLAYER NAME</label>
+                    <input type="text" id="input-player-name" placeholder="Enter your name..." maxlength="12" value="FlappyHero" autocomplete="off">
                 </div>
 
-                <!-- Customization (UC-4, 5) -->
-                <div class="customization-section">
-                    <label>CUSTOMIZE BIRD</label>
+                <h1 class="game-title">FLAPPY BIRD</h1>
+
+                <!-- 1. PRIMARY MAIN MENU BUTTONS (PLAY, CUSTOMIZE, SETTINGS) -->
+                <div id="main-menu-primary-actions" class="portrait-actions-stack">
+                    <button class="btn btn-primary btn-touch-action btn-menu-main" id="btn-main-play">
+                        <span class="btn-icon">▶️</span> PLAY
+                    </button>
+                    <button class="btn btn-secondary btn-touch-action btn-menu-main" id="btn-main-customize">
+                        <span class="btn-icon">🎨</span> CUSTOMIZE
+                    </button>
+                    <button class="btn btn-secondary btn-touch-action btn-menu-main" id="btn-main-settings">
+                        <span class="btn-icon">⚙️</span> SETTINGS
+                    </button>
+                </div>
+
+                <!-- 2. SUB-MENU: PLAY MODES (PLAY RANK, CREATE GAME, JOIN GAME) -->
+                <div id="main-menu-play-subactions" class="portrait-actions-stack" style="display: none;">
+                    <div class="submenu-title">CHOOSE GAME MODE</div>
+                    <button class="btn btn-primary btn-touch-action btn-gold-accent" id="btn-play-rank">
+                        <span class="btn-icon">🏆</span> PLAY RANK (SOLO)
+                    </button>
+                    <button class="btn btn-secondary btn-touch-action" id="btn-create-lobby">
+                        <span class="btn-icon">🌐</span> CREATE GAME
+                    </button>
+                    <button class="btn btn-secondary btn-touch-action" id="btn-open-join">
+                        <span class="btn-icon">🔑</span> JOIN GAME
+                    </button>
+                    <button class="btn btn-back-menu" id="btn-play-back">
+                        ⬅ BACK
+                    </button>
+                </div>
+
+                <!-- 3. SUB-VIEW: BIRD CUSTOMIZATION -->
+                <div id="main-menu-customize-view" class="customization-section" style="display: none;">
+                    <div class="submenu-title">BIRD CUSTOMIZATION</div>
                     <div class="preview-box">
                         <div id="preview-bird" class="preview-bird" style="position: relative; width: 48px; height: 36px; display: flex; align-items: center; justify-content: center; background: transparent; border: none;">
                             <img id="preview-bird-img" src="assets/images/flappybird0.png" style="width: 34px; height: 24px; object-fit: contain;" alt="Bird" />
@@ -31,42 +63,39 @@
                     </div>
 
                     <div class="option-selector">
-                        <button class="btn btn-small" id="btn-prev-skin">&lt;</button>
+                        <button class="btn btn-touch-arrow" id="btn-prev-skin">&lt;</button>
                         <span id="skin-name-label" style="font-size: 8px;">Classic Yellow</span>
-                        <button class="btn btn-small" id="btn-next-skin">&gt;</button>
+                        <button class="btn btn-touch-arrow" id="btn-next-skin">&gt;</button>
                     </div>
 
                     <div class="option-selector">
-                        <button class="btn btn-small" id="btn-prev-hat">&lt;</button>
+                        <button class="btn btn-touch-arrow" id="btn-prev-hat">&lt;</button>
                         <span id="hat-name-label" style="font-size: 8px;">None</span>
-                        <button class="btn btn-small" id="btn-next-hat">&gt;</button>
+                        <button class="btn btn-touch-arrow" id="btn-next-hat">&gt;</button>
                     </div>
-                </div>
 
-                <div style="display: flex; justify-content: space-between;">
-                    <button class="btn btn-primary" id="btn-create-lobby" style="flex: 1;">CREATE ROOM</button>
-                    <button class="btn btn-secondary" id="btn-open-join" style="flex: 1;">JOIN ROOM</button>
+                    <button class="btn btn-primary btn-touch-action" id="btn-customize-done" style="margin-top: 14px;">
+                        ✓ DONE
+                    </button>
                 </div>
             </div>
         </div>
 
         <!-- SCREEN 2: LOBBY ROOM (UC-8, 9, 11, 12, 13) -->
         <div id="screen-lobby" class="screen">
-            <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <h2 style="margin: 0;">LOBBY ROOM</h2>
-                    <button class="btn btn-danger btn-small" id="btn-leave-lobby">LEAVE ROOM</button>
-                </div>
-
-                <div style="margin-bottom: 8px; font-size: 10px;">
-                    ROOM CODE: <strong id="lobby-id-display" style="color: #f7d51d;">------</strong>
-                    <button class="btn btn-small" id="btn-copy-lobby-id">COPY</button>
+            <div class="card card-portrait">
+                <div class="lobby-header-bar">
+                    <h2 style="margin: 0; font-size: 13px;">LOBBY ROOM</h2>
+                    <div class="room-code-tag">
+                        ROOM: <strong id="lobby-id-display" style="color: #f7d51d;">------</strong>
+                        <button class="btn btn-small" id="btn-copy-lobby-id">COPY</button>
+                    </div>
+                    <button class="btn btn-danger btn-small" id="btn-leave-lobby">LEAVE</button>
                 </div>
 
                 <!-- Host Settings Panel -->
                 <div id="host-controls-panel" class="host-controls" style="display: none;">
-                    <div style="font-size: 9px; color: #f7d51d; margin-bottom: 6px;">HOST CONTROLS</div>
-                    
+                    <div class="host-controls-title">HOST CONTROLS</div>
                     <div class="setting-row">
                         <span>GAME MODE:</span>
                         <select id="select-game-mode">
@@ -91,13 +120,13 @@
                     <!-- Populated dynamically -->
                 </ul>
 
-                <!-- Ready & Start Buttons -->
-                <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
-                    <button class="btn btn-secondary btn-small" id="btn-open-settings">SETTINGS</button>
-                    <button class="btn btn-primary" id="btn-start-match" style="display: none; flex: 1; margin-left: 10px;">START MATCH</button>
+                <!-- Action Controls (Vertical One-Handed Buttons) -->
+                <div class="lobby-action-row">
+                    <button class="btn btn-secondary" id="btn-open-settings">⚙️ SETTINGS</button>
+                    <button class="btn btn-primary btn-start-match" id="btn-start-match" style="display: none; flex: 1.3;">▶ START MATCH</button>
                 </div>
 
-                <!-- Prominent Large Ready / Unready Button -->
+                <!-- Prominent Large Ready Button -->
                 <button class="btn btn-primary btn-ready-large" id="btn-toggle-ready">READY</button>
 
                 <!-- Chat Box in Lobby -->
@@ -105,7 +134,7 @@
                     <div class="chat-messages" id="lobby-chat-messages"></div>
                     <div class="chat-input-row">
                         <input type="text" class="chat-input" id="lobby-chat-input" placeholder="Type a message..." maxlength="80" autocomplete="off">
-                        <button class="btn btn-small btn-primary" id="btn-lobby-send-chat">SEND</button>
+                        <button class="btn btn-primary" id="btn-lobby-send-chat">SEND</button>
                     </div>
                 </div>
             </div>
@@ -113,45 +142,38 @@
 
         <!-- SCREEN: SYNCHRONIZED LOADING SCREEN -->
         <div id="screen-loading" class="screen">
-            <div class="card" style="width: 440px; text-align: center;">
+            <div class="card card-portrait" style="text-align: center;">
                 <h1 class="game-title">PREPARING MATCH</h1>
-                <div style="margin: 20px 0;">
-                    <div style="font-size: 32px; animation: pulse 1s infinite;">⏳</div>
-                    <div id="loading-status-text" style="font-size: 11px; color: #f7d51d; margin-top: 14px; text-shadow: 1px 1px 0 #000;">
+                <div class="loading-animation-container">
+                    <div class="loading-icon">⏳</div>
+                    <div id="loading-status-text" class="loading-status">
                         Waiting for players... (0/0 Ready)
                     </div>
+                    <div class="loading-bar-retro">
+                        <div class="loading-bar-fill"></div>
+                    </div>
                 </div>
-                <div style="font-size: 8px; color: #eee; margin-top: 10px; line-height: 1.4;">
+                <div class="loading-subtitle">
                     Syncing map assets and physics engine...
                 </div>
             </div>
         </div>
 
-        <!-- SCREEN 3: GAME CANVAS & HUD -->
-        <div id="screen-game" class="screen">
-            <div id="game-canvas-container">
-                <canvas id="gameCanvas" width="960" height="640"></canvas>
-
-                <!-- HUD Overlay -->
-                <div id="hud">
-                    <div class="hud-panel" id="hud-map-progress" style="display: none;">
-                        <span id="hud-pipe-count">Pipes Cleared: 0 / 10</span>
-                    </div>
-
-                    <!-- Inventory Slot UI -->
-                    <div class="hud-panel" id="hud-inventory" style="display: flex; flex-direction: column; align-items: center; pointer-events: auto;">
-                        <div class="inventory-slot" id="inventory-slot">
-                            <span id="inventory-empty-label">EMPTY</span>
-                            <img id="inventory-item-icon" src="" style="display: none; width: 32px; height: 32px;" alt="Item" />
-                        </div>
-                        <div style="font-size: 8px; margin-top: 4px; color: #f7d51d; text-shadow: 1px 1px 0 #000;">[F] USE</div>
-                    </div>
-
-                    <div class="hud-panel" style="margin-left: auto;">
-                        <button class="btn btn-danger btn-small" id="btn-in-game-exit">EXIT MATCH</button>
-                    </div>
+        <!-- SCREEN 3: GAME CANVAS & HUD (PORTRAIT FULLSCREEN) -->
+        <div id="screen-game" class="screen screen-game-portrait">
+            <!-- Minimal Top Bar (Progress Bar, Ping, Exit) -->
+            <div id="hud" class="hud-top-bar">
+                <div class="hud-panel" id="hud-map-progress" style="display: none;">
+                    <span id="hud-pipe-count">Pipes Cleared: 0 / 10</span>
                 </div>
 
+                <!-- Minimal Top-Right Corner Exit Button -->
+                <button class="btn btn-in-game-exit" id="btn-in-game-exit" title="Exit Match">✕ LEAVE</button>
+            </div>
+
+            <!-- Middle Canvas Play Area -->
+            <div id="game-canvas-container" class="canvas-container-portrait">
+                <canvas id="gameCanvas" width="360" height="640"></canvas>
 
                 <!-- 10s Finish Timer Banner -->
                 <div id="finish-timer-banner">
@@ -165,13 +187,35 @@
                 <!-- Bottom-Right Item Activity Feed -->
                 <div id="hud-activity-feed"></div>
             </div>
+
+            <!-- In-Game Bottom Action HUD Controls -->
+            <div id="hud-game-controls" class="hud-game-controls">
+                <!-- Floating Item Action Button -->
+                <div id="hud-inventory" class="hud-item-fab" title="Tap to use item (or press F)">
+                    <div class="item-fab-box" id="inventory-slot">
+                        <span id="inventory-empty-label" class="item-fab-empty">ITEM</span>
+                        <img id="inventory-item-icon" src="" class="item-fab-icon" style="display: none;" alt="Item" />
+                    </div>
+                    <div class="item-fab-hint" id="item-fab-hint">TAP TO USE</div>
+                </div>
+
+                <!-- Floating Dash Action Button -->
+                <div id="hud-dash" class="hud-dash-fab" title="Dash Burst (Shift or D)">
+                    <div class="dash-fab-box" id="dash-slot">
+                        <span class="dash-fab-icon">⚡</span>
+                        <span id="dash-label" class="dash-fab-label">DASH</span>
+                        <span id="dash-cooldown-overlay" class="dash-cooldown-overlay"></span>
+                    </div>
+                    <div class="dash-fab-hint" id="dash-fab-hint">SHIFT / D</div>
+                </div>
+            </div>
         </div>
 
-        <!-- SCREEN 4: LEADERBOARD & RESULTS (BR 6, 7, 13, 14) -->
+        <!-- SCREEN 4: LEADERBOARD & RESULTS (PORTRAIT) -->
         <div id="screen-results" class="screen">
-            <div class="card" style="width: 540px;">
+            <div class="card card-portrait">
                 <h1 class="game-title" id="results-main-header">MATCH RESULTS</h1>
-                <h2 id="results-sub-header" style="color: #f7d51d; font-size: 13px; margin-bottom: 12px; display: none;"></h2>
+                <h2 id="results-sub-header" style="color: #f7d51d; font-size: 11px; margin-bottom: 8px; display: none;"></h2>
 
                 <table class="leaderboard-table" id="leaderboard-table-el">
                     <thead id="leaderboard-head">
@@ -186,24 +230,23 @@
                     </tbody>
                 </table>
 
-                <!-- Large EXIT TO MAIN MENU Button for ALL players -->
-                <button class="btn btn-danger btn-ready-large" id="btn-results-exit-menu" style="margin-top: 10px;">EXIT TO MAIN MENU</button>
-
-                <!-- Post-Match Action Controls -->
-                <div id="results-action-controls" style="display: flex; gap: 8px; justify-content: space-around; margin-top: 10px;">
-                    <button class="btn btn-primary" id="btn-play-again" style="flex: 1; display: none;">PLAY AGAIN</button>
-                    <button class="btn btn-secondary" id="btn-return-lobby" style="flex: 1; display: none;">RETURN TO LOBBY</button>
+                <div id="results-action-controls" class="portrait-actions-stack">
+                    <button class="btn btn-primary btn-touch-action" id="btn-play-again" style="display: none;">PLAY AGAIN</button>
+                    <button class="btn btn-secondary btn-touch-action" id="btn-return-lobby" style="display: none;">RETURN TO LOBBY</button>
                 </div>
-                <div id="waiting-host-text" style="display: none; margin-top: 8px; font-size: 10px; color: #f7d51d;">
+                <div id="waiting-host-text" style="display: none; font-size: 9px; color: #f7d51d; margin: 6px 0;">
                     WAITING FOR HOST TO START NEXT MATCH...
                 </div>
+
+                <!-- Large EXIT TO MAIN MENU Button for ALL players -->
+                <button class="btn btn-danger btn-ready-large" id="btn-results-exit-menu">EXIT TO MAIN MENU</button>
 
                 <!-- Chat Box in Results -->
                 <div class="chat-container">
                     <div class="chat-messages" id="results-chat-messages"></div>
                     <div class="chat-input-row">
                         <input type="text" class="chat-input" id="results-chat-input" placeholder="Type a message..." maxlength="80" autocomplete="off">
-                        <button class="btn btn-small btn-primary" id="btn-results-send-chat">SEND</button>
+                        <button class="btn btn-primary" id="btn-results-send-chat">SEND</button>
                     </div>
                 </div>
             </div>
@@ -259,12 +302,90 @@
             </div>
         </div>
 
+        <!-- NETWORK QUALITY INDICATOR (Live Ping HUD) -->
+        <div id="network-indicator" class="network-indicator">
+            <span id="net-ping-dot" class="net-dot"></span>
+            <span id="net-ping-text">PING: --</span>
+            <span id="net-quality-badge" class="net-badge">DISCONNECTED</span>
+            <button id="btn-toggle-net-debug" class="btn btn-small btn-net-debug" style="display: none;">[NET SIM]</button>
+            <div id="net-tooltip" class="net-tooltip">
+                <div>RTT: <strong id="net-tooltip-rtt">--</strong></div>
+                <div>Smoothed: <strong id="net-tooltip-srtt">--</strong></div>
+                <div>Min/Max: <strong id="net-tooltip-minmax">-- / --</strong></div>
+                <div>Jitter: <strong id="net-tooltip-jitter">--</strong></div>
+            </div>
+        </div>
+
+        <!-- NETWORK CONDITION SIMULATOR (Debug Panel - Activated via ?debug=network) -->
+        <div id="network-debug-panel" class="network-debug-panel" style="display: none;">
+            <div class="net-debug-header">
+                <span>NETWORK SIMULATOR</span>
+                <button id="btn-close-net-debug" class="btn btn-small btn-danger" style="padding: 2px 6px;">X</button>
+            </div>
+            <div class="net-debug-body">
+                <div class="net-debug-row">
+                    <label class="net-switch-label">
+                        <input type="checkbox" id="net-sim-enable">
+                        <span>ENABLE SIMULATOR</span>
+                    </label>
+                </div>
+
+                <div class="net-debug-row">
+                    <div class="net-slider-header">
+                        <span>LATENCY (0-500ms):</span>
+                        <strong id="label-net-latency">0 ms</strong>
+                    </div>
+                    <input type="range" id="slider-net-latency" min="0" max="500" value="0" step="10">
+                </div>
+
+                <div class="net-debug-row">
+                    <div class="net-slider-header">
+                        <span>JITTER (0-100ms):</span>
+                        <strong id="label-net-jitter">0 ms</strong>
+                    </div>
+                    <input type="range" id="slider-net-jitter" min="0" max="100" value="0" step="5">
+                </div>
+
+                <div class="net-debug-row">
+                    <div class="net-slider-header">
+                        <span>DROP RATE (0-20%):</span>
+                        <strong id="label-net-drop">0 %</strong>
+                    </div>
+                    <input type="range" id="slider-net-drop" min="0" max="20" value="0" step="1">
+                </div>
+
+                <div class="net-debug-row">
+                    <div class="net-slider-header">
+                        <span>DIRECTION:</span>
+                    </div>
+                    <select id="select-net-direction">
+                        <option value="both">Both (Client ↔ Server)</option>
+                        <option value="outbound">Outbound (Client → Server)</option>
+                        <option value="inbound">Inbound (Server → Client)</option>
+                    </select>
+                </div>
+
+                <div class="net-debug-row net-debug-status">
+                    <span>STATUS:</span>
+                    <strong id="net-sim-status-text">OFF (PASS-THROUGH)</strong>
+                </div>
+
+                <div class="net-debug-actions">
+                    <button class="btn btn-secondary btn-small" id="btn-reset-net-sim">RESET TO ZERO</button>
+                </div>
+
+                <div class="net-debug-notice">
+                    * Educational Note: Simulates application-level WebSocket message delays and drops. TCP transport layer and retransmissions are unaffected.
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Scripts -->
     <script src="js/audio.js"></script>
     <script src="js/physics.js"></script>
     <script src="js/renderer.js"></script>
+    <script src="js/networkDiagnostics.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/app.js"></script>
 </body>

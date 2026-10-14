@@ -4,6 +4,29 @@ window.playerSkinId = 0;
 window.playerHatId = 0;
 
 document.addEventListener("DOMContentLoaded", () => {
+    // Clean query parameters from URL bar without reloading (preserves other query parameters)
+    function clearServerQueryParams() {
+        if (typeof window !== "undefined" && window.location && window.history && window.history.replaceState) {
+            try {
+                const url = new URL(window.location.href);
+                let changed = false;
+                for (let param of ["server", "backend", "ws"]) {
+                    if (url.searchParams.has(param)) {
+                        url.searchParams.delete(param);
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    const newSearch = url.searchParams.toString();
+                    const newUrl = url.pathname + (newSearch ? `?${newSearch}` : "") + url.hash;
+                    window.history.replaceState({}, document.title, newUrl);
+                }
+            } catch (e) {
+                console.warn("[WebSocket] Failed to clean query params:", e);
+            }
+        }
+    }
+
     // Parse URL query parameter for custom backend (e.g. ?server=wss://xxxx.trycloudflare.com)
     const urlParams = new URLSearchParams(window.location.search);
     const queryServer = urlParams.get("server") || urlParams.get("backend") || urlParams.get("ws");
@@ -17,7 +40,12 @@ document.addEventListener("DOMContentLoaded", () => {
             localStorage.setItem("GAME_SERVER_URL", formattedServer);
         }
         window.SERVER_URL = formattedServer;
+        clearServerQueryParams();
     }
+
+    // Network Diagnostics & Simulator Instances
+    const pingTracker = (typeof PingTracker !== "undefined") ? new PingTracker() : null;
+    const networkSimulator = (typeof NetworkSimulator !== "undefined") ? new NetworkSimulator() : null;
 
     // Native WebSocket client initialization with Exponential Backoff Reconnection
     let ws = null;
@@ -25,6 +53,21 @@ document.addEventListener("DOMContentLoaded", () => {
     let reconnectTimeout = null;
 
     function connectWebSocket() {
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+        }
+        if (ws) {
+            try {
+                ws.onopen = null;
+                ws.onmessage = null;
+                ws.onerror = null;
+                ws.onclose = null;
+                ws.close();
+            } catch (e) {}
+            ws = null;
+        }
+
         const defaultProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const customBackend = window.SERVER_URL || (typeof localStorage !== "undefined" && localStorage.getItem("GAME_SERVER_URL"));
         const wsUrl = customBackend ? customBackend : `${defaultProtocol}//${window.location.host}`;
@@ -40,16 +83,55 @@ document.addEventListener("DOMContentLoaded", () => {
                 clearTimeout(reconnectTimeout);
                 reconnectTimeout = null;
             }
+            if (pingTracker) {
+                pingTracker.start((pingPayload) => {
+                    rawSendWs("network_ping", pingPayload);
+                }, (status) => {
+                    updateNetworkIndicatorUI(status);
+                });
+            }
         };
 
         ws.onmessage = (event) => {
-            if (typeof handleSocketMessage === "function") {
-                handleSocketMessage(event);
+            let msg;
+            try {
+                msg = JSON.parse(event.data);
+            } catch (err) {
+                console.error("[WebSocket] Failed to parse message:", err);
+                return;
+            }
+
+            // Application-level pong response directly updates PingTracker (never simulated/delayed)
+            if (msg.type === "network_pong") {
+                if (pingTracker) {
+                    pingTracker.handlePong(msg.data);
+                }
+                return;
+            }
+
+            // Inbound simulator hook
+            if (networkSimulator && networkSimulator.enabled) {
+                networkSimulator.simulateReceive(msg, (dispatchedMsg) => {
+                    if (typeof handleSocketMessage === "function") {
+                        handleSocketMessage(dispatchedMsg);
+                    }
+                });
+            } else {
+                if (typeof handleSocketMessage === "function") {
+                    handleSocketMessage(msg);
+                }
             }
         };
 
         ws.onclose = (event) => {
             console.warn(`[WebSocket] Connection closed (Code: ${event.code}). Scheduling reconnection...`);
+            if (pingTracker) {
+                pingTracker.stop();
+                updateNetworkIndicatorUI(pingTracker.getStatus());
+            }
+            if (networkSimulator) {
+                networkSimulator.clearPending();
+            }
             scheduleReconnection();
         };
 
@@ -71,29 +153,71 @@ document.addEventListener("DOMContentLoaded", () => {
 
     connectWebSocket();
 
-    // Helper: Send JSON message to server with standardized protocol { type, data }
-    function sendWs(type, data = {}) {
+    // Helper: Direct send JSON message to server
+    function rawSendWs(type, data = {}) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type, data }));
+            return true;
         } else {
             console.warn(`[WebSocket] Cannot send ${type}: connection state is ${ws ? ws.readyState : "null"}`);
             if (type === "create_lobby" || type === "join_lobby" || type === "start_match") {
-                const inputUrl = prompt(
-                    "Disconnected from Game Server!\n\nPlease enter your active Cloudflare Tunnel WebSocket URL (e.g. wss://xxxx.trycloudflare.com):",
-                    localStorage.getItem("GAME_SERVER_URL") || "wss://duration-republic-hey-duties.trycloudflare.com"
-                );
-                if (inputUrl) {
-                    let formatted = inputUrl.trim();
-                    if (!formatted.startsWith("ws://") && !formatted.startsWith("wss://")) {
-                        formatted = "wss://" + formatted.replace(/^https?:\/\//, "");
+                const isStaticDeployment = typeof window !== "undefined" && window.location &&
+                    (window.location.hostname.endsWith(".vercel.app") || window.location.hostname.endsWith(".github.io"));
+                const currentSavedUrl = (typeof localStorage !== "undefined" && localStorage.getItem("GAME_SERVER_URL")) || window.SERVER_URL || "";
+                const defaultProtocol = (typeof window !== "undefined" && window.location && window.location.protocol === "https:") ? "wss:" : "ws:";
+                const defaultWsUrl = `${defaultProtocol}//${(typeof window !== "undefined" && window.location) ? window.location.host : "localhost:3000"}`;
+
+                let promptMsg = "Disconnected from Game Server!\n\n";
+                if (isStaticDeployment) {
+                    promptMsg += "Note: Running on static hosting (e.g. Vercel). An external WebSocket server URL is required.\n\n";
+                    promptMsg += "Please enter your active WebSocket Server URL (e.g. wss://xxxx.trycloudflare.com):\n(Or enter ws://localhost:3000 if server runs locally)";
+                } else {
+                    promptMsg += "Please enter your active WebSocket Server URL (e.g. wss://xxxx.trycloudflare.com or ws://localhost:3000):\n(Leave blank to use default host: " + defaultWsUrl + ")";
+                }
+
+                const inputUrl = prompt(promptMsg, currentSavedUrl);
+                if (inputUrl !== null) {
+                    const trimmed = inputUrl.trim();
+                    if (trimmed) {
+                        let formatted = trimmed;
+                        if (!formatted.startsWith("ws://") && !formatted.startsWith("wss://")) {
+                            const proto = (window.location.protocol === "https:" || formatted.startsWith("https://")) ? "wss://" : "ws://";
+                            formatted = proto + formatted.replace(/^https?:\/\//, "");
+                        }
+                        if (typeof localStorage !== "undefined") {
+                            localStorage.setItem("GAME_SERVER_URL", formatted);
+                        }
+                        window.SERVER_URL = formatted;
+                        clearServerQueryParams();
+                        connectWebSocket();
+                        alert("Connecting to " + formatted + "... Please click CREATE/JOIN ROOM again in 2 seconds!");
+                    } else {
+                        // User submitted blank: Clear stored URL, clear query params, reconnect to default host
+                        if (typeof localStorage !== "undefined") {
+                            localStorage.removeItem("GAME_SERVER_URL");
+                        }
+                        window.SERVER_URL = null;
+                        clearServerQueryParams();
+                        connectWebSocket();
+
+                        if (isStaticDeployment) {
+                            alert("Reset to default host. Note: Static hosting requires an external WebSocket server (e.g. Cloudflare Tunnel or PaaS). If connection fails, please provide a server URL.");
+                        } else {
+                            alert("Reset to default server host (" + defaultWsUrl + "). Reconnecting... Please click CREATE/JOIN ROOM again in 2 seconds!");
+                        }
                     }
-                    localStorage.setItem("GAME_SERVER_URL", formatted);
-                    window.SERVER_URL = formatted;
-                    connectWebSocket();
-                    alert("Reconnecting to server... Please click CREATE/JOIN ROOM again in 2 seconds!");
                 }
             }
+            return false;
         }
+    }
+
+    // Standardized sendWs router (routes through NetworkSimulator if enabled)
+    function sendWs(type, data = {}) {
+        if (type === "network_ping" || !networkSimulator || !networkSimulator.enabled) {
+            return rawSendWs(type, data);
+        }
+        return networkSimulator.simulateSend(type, data, (t, d) => rawSendWs(t, d));
     }
 
     // DOM Screens
@@ -119,6 +243,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnConfirmJoin = document.getElementById("btn-confirm-join");
     const btnCancelJoin = document.getElementById("btn-cancel-join");
     const joinCodeInput = document.getElementById("input-join-code");
+
+    // Revamped Main Menu Navigation Buttons
+    const btnMainPlay = document.getElementById("btn-main-play");
+    const btnMainCustomize = document.getElementById("btn-main-customize");
+    const btnMainSettings = document.getElementById("btn-main-settings");
+    const btnPlayRank = document.getElementById("btn-play-rank");
+    const btnPlayBack = document.getElementById("btn-play-back");
+    const btnCustomizeDone = document.getElementById("btn-customize-done");
+    const mainMenuPrimaryActions = document.getElementById("main-menu-primary-actions");
+    const mainMenuPlaySubactions = document.getElementById("main-menu-play-subactions");
+    const mainMenuCustomizeView = document.getElementById("main-menu-customize-view");
 
     // Customization Elements
     const skinNameLabel = document.getElementById("skin-name-label");
@@ -151,11 +286,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const finishTimerSecondsEl = document.getElementById("finish-timer-seconds");
     const startCountdownEl = document.getElementById("start-countdown");
 
-    // Inventory UI Elements
+    // Inventory & Action UI Elements
     const hudInventory = document.getElementById("hud-inventory");
     const inventorySlot = document.getElementById("inventory-slot");
     const inventoryEmptyLabel = document.getElementById("inventory-empty-label");
     const inventoryItemIcon = document.getElementById("inventory-item-icon");
+    const hudDash = document.getElementById("hud-dash");
+    const dashSlot = document.getElementById("dash-slot");
+    const dashCooldownOverlay = document.getElementById("dash-cooldown-overlay");
+    const dashFabHint = document.getElementById("dash-fab-hint");
 
     // Results Screen Elements
     const resultsMainHeader = document.getElementById("results-main-header");
@@ -185,13 +324,91 @@ document.addEventListener("DOMContentLoaded", () => {
     const physics = new PhysicsEngine();
     const renderer = new CanvasRenderer(canvas, physics);
 
+    // Ground Impact Callback from Physics Engine (comic dust puff & audio feedback)
+    window.onGroundImpact = (x, y, isLocal) => {
+        if (renderer && typeof renderer.triggerGroundImpact === "function") {
+            renderer.triggerGroundImpact(x, y, isLocal);
+        }
+        if (isLocal && audioManager) {
+            audioManager.playSFX("hit");
+        }
+    };
+
+    // Wing Flap Callback from Physics Engine (wind puff cloud & skin-matching fluttering feathers)
+    window.onPlayerFlap = (x, y, skinId, isLocal) => {
+        if (renderer && typeof renderer.triggerFlapEffect === "function") {
+            renderer.triggerFlapEffect(x, y, skinId, isLocal);
+        }
+    };
+
+    // Shield Break Callback from Physics Engine (water ripple & splash droplets)
+    window.onShieldBreak = (x, y) => {
+        if (renderer && typeof renderer.triggerShieldBreakEffect === "function") {
+            renderer.triggerShieldBreakEffect(x, y);
+        }
+    };
+
+    // Ice Shatter Callback from Physics Engine (angular crystal shards burst)
+    window.onIceShatter = (x, y) => {
+        if (renderer && typeof renderer.triggerIceShatterEffect === "function") {
+            renderer.triggerIceShatterEffect(x, y);
+        }
+    };
+
+    // Device-based Responsive Layout Controller (Mobile Portrait vs Desktop Fullscreen Expanded View)
+    function checkIsDesktop() {
+        const userAgent = navigator.userAgent || "";
+        const isMobileUA = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+        // Explicit phone browsers in portrait mode are Mobile
+        if (isMobileUA && window.innerWidth < window.innerHeight) {
+            return false;
+        }
+        // Desktop / Large Screens: Viewport width >= 768px and landscape orientation (width > height)
+        return window.innerWidth >= 768 && window.innerWidth > window.innerHeight;
+    }
+
+    function applyResponsiveLayout() {
+        const isDesktop = checkIsDesktop();
+
+        if (isDesktop) {
+            document.body.classList.add("layout-desktop");
+            document.body.classList.remove("layout-mobile");
+        } else {
+            document.body.classList.add("layout-mobile");
+            document.body.classList.remove("layout-desktop");
+        }
+
+        // Authoritative world height fixed at 640 (1:1 sync with server physics and constants)
+        const viewportW = window.innerWidth || document.documentElement.clientWidth;
+        const viewportH = window.innerHeight || document.documentElement.clientHeight;
+        const aspect = (viewportW > 0 && viewportH > 0) ? (viewportW / viewportH) : (isDesktop ? 16 / 9 : 9 / 16);
+
+        const targetHeight = 640;
+        const targetWidth = Math.round(targetHeight * aspect);
+
+        renderer.resize(targetWidth, targetHeight);
+    }
+
+    applyResponsiveLayout();
+    window.addEventListener("resize", applyResponsiveLayout);
+    window.addEventListener("orientationchange", () => {
+        setTimeout(applyResponsiveLayout, 100);
+    });
+
     let currentLobby = null;
     let localPlayerId = null;
     let gameLoopRunning = false;
     let animationFrameId = null;
 
-    const skins = ["Classic Yellow", "Crimson Red", "Emerald Green", "Ocean Blue", "Royal Gold"];
+    const skins = ["Classic Yellow", "Ruby Red", "Emerald Green", "Ocean Blue", "Royal Purple"];
     const hats = ["None", "Golden Crown", "Top Hat", "Red Cap", "Viking Helmet"];
+
+    // Main Menu Sub-view Reset Helper
+    function resetMainMenuUI() {
+        if (mainMenuPrimaryActions) mainMenuPrimaryActions.style.display = "flex";
+        if (mainMenuPlaySubactions) mainMenuPlaySubactions.style.display = "none";
+        if (mainMenuCustomizeView) mainMenuCustomizeView.style.display = "none";
+    }
 
     // Explicit State & Chat Cleanup Helpers
     function clearChatUI() {
@@ -214,12 +431,13 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    // Primary Colors CSS Filters (Matching in-game Canvas Renderer)
     const skinFilters = [
-        "none",
-        "hue-rotate(140deg) saturate(1.8)", // Crimson Red
-        "hue-rotate(80deg) saturate(1.5)",  // Emerald Green
-        "hue-rotate(200deg) saturate(1.5)", // Ocean Blue
-        "hue-rotate(280deg) saturate(1.5)"  // Royal Gold
+        "none",                                              // Classic Yellow (Primary Yellow)
+        "hue-rotate(310deg) saturate(2.4) brightness(1.05)", // Ruby Red (Primary Red)
+        "hue-rotate(75deg) saturate(2.0) brightness(1.0)",   // Emerald Green (Vibrant Green)
+        "hue-rotate(165deg) saturate(2.2) brightness(1.05)", // Ocean Blue (Primary Blue)
+        "hue-rotate(230deg) saturate(2.2) brightness(1.05)"  // Royal Purple (Vibrant Purple)
     ];
 
     const hatSources = [
@@ -267,6 +485,12 @@ document.addEventListener("DOMContentLoaded", () => {
             screens[key].classList.remove("active");
         }
         screens[screenKey].classList.add("active");
+        if (screenKey === "mainMenu") {
+            resetMainMenuUI();
+        }
+        if (screenKey === "gameView") {
+            applyResponsiveLayout();
+        }
     }
 
     // Customization Event Listeners
@@ -293,6 +517,325 @@ document.addEventListener("DOMContentLoaded", () => {
     nameInput.addEventListener("input", (e) => {
         window.playerName = e.target.value.trim() || "BirdPlayer";
     });
+
+    // Revamped Main Menu Navigation Event Listeners
+    if (btnMainPlay) {
+        btnMainPlay.addEventListener("click", () => {
+            if (mainMenuPrimaryActions) mainMenuPrimaryActions.style.display = "none";
+            if (mainMenuPlaySubactions) mainMenuPlaySubactions.style.display = "flex";
+        });
+    }
+
+    if (btnPlayBack) {
+        btnPlayBack.addEventListener("click", () => {
+            resetMainMenuUI();
+        });
+    }
+
+    if (btnMainCustomize) {
+        btnMainCustomize.addEventListener("click", () => {
+            if (mainMenuPrimaryActions) mainMenuPrimaryActions.style.display = "none";
+            if (mainMenuCustomizeView) mainMenuCustomizeView.style.display = "block";
+            updateCustomizationUI();
+        });
+    }
+
+    if (btnCustomizeDone) {
+        btnCustomizeDone.addEventListener("click", () => {
+            resetMainMenuUI();
+        });
+    }
+
+    if (btnMainSettings) {
+        btnMainSettings.addEventListener("click", () => {
+            modals.settings.classList.add("active");
+        });
+    }
+
+    if (btnPlayRank) {
+        btnPlayRank.addEventListener("click", () => {
+            startRankMode();
+        });
+    }
+
+    // ============================================================
+    // RANK MODE (CLASSIC SOLO) & MOCK DATABASE / LEADERBOARD
+    // ============================================================
+    window.isRankMode = false;
+    window.rankCurrentScore = 0;
+    let rankLastPipeX = 420;
+    let rankNextPipeIdx = 1;
+
+    const MOCK_RANK_DB_KEY = "FLAPPY_RANK_MOCK_LEADERBOARD";
+
+    function getRankLeaderboard() {
+        try {
+            const stored = localStorage.getItem(MOCK_RANK_DB_KEY);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+            }
+        } catch (e) {
+            console.warn("[Rank DB] Error reading leaderboard from localStorage:", e);
+        }
+
+        const defaultLeaderboard = [
+            { name: "SkyKing", score: 48, date: "2026-10-12" },
+            { name: "AceFlapper", score: 36, date: "2026-10-13" },
+            { name: "PixelBird", score: 27, date: "2026-10-14" },
+            { name: "WingMaster", score: 19, date: "2026-10-11" },
+            { name: "FeatherPro", score: 14, date: "2026-10-14" },
+            { name: "CloudRider", score: 10, date: "2026-10-10" },
+            { name: "BreezeFlyer", score: 6, date: "2026-10-13" },
+            { name: "ChirpChampion", score: 4, date: "2026-10-12" }
+        ];
+        saveRankLeaderboard(defaultLeaderboard);
+        return defaultLeaderboard;
+    }
+
+    function saveRankLeaderboard(list) {
+        try {
+            localStorage.setItem(MOCK_RANK_DB_KEY, JSON.stringify(list));
+        } catch (e) {
+            console.warn("[Rank DB] Error saving leaderboard to localStorage:", e);
+        }
+    }
+
+    function recordRankScore(playerName, score) {
+        const list = getRankLeaderboard();
+        const cleanName = (playerName || "Anonymous").trim().slice(0, 12);
+        const newEntry = {
+            name: cleanName,
+            score: Number(score) || 0,
+            date: new Date().toISOString().split("T")[0],
+            timestamp: Date.now()
+        };
+        list.push(newEntry);
+        list.sort((a, b) => b.score - a.score || a.date.localeCompare(b.date));
+
+        // Find rank of new entry
+        const playerRank = list.findIndex(e => e === newEntry) + 1;
+        const trimmed = list.slice(0, 30);
+        saveRankLeaderboard(trimmed);
+
+        return { leaderboard: trimmed, playerRank, newEntry };
+    }
+
+    function generateRankPipes(startPipeIndex = 1, startX = 420, count = 25) {
+        const pipes = [];
+        const pipeSpacingX = 220;
+        const pipeWidth = 52;
+        const pipeHeight = 640;
+        const groundY = 616;
+        const gapSize = 135;
+        const minVisibleTopHeight = 60;
+        const maxVisibleTopHeight = groundY - gapSize - 60;
+
+        let currentX = startX;
+
+        for (let i = 0; i < count; i++) {
+            const pipeIdx = startPipeIndex + i;
+            const visibleTopHeight = Math.floor(Math.random() * (maxVisibleTopHeight - minVisibleTopHeight + 1)) + minVisibleTopHeight;
+            const topY = visibleTopHeight - pipeHeight;
+            const bottomY = visibleTopHeight + gapSize;
+
+            pipes.push({
+                pipeIndex: pipeIdx,
+                x: currentX,
+                width: pipeWidth,
+                height: pipeHeight,
+                topHeight: visibleTopHeight,
+                bottomHeight: groundY - bottomY,
+                topY: topY,
+                bottomY: bottomY,
+                scored: false
+            });
+
+            currentX += pipeSpacingX;
+        }
+
+        return { pipes, nextStartX: currentX, nextPipeIndex: startPipeIndex + count };
+    }
+
+    function checkRankPipeStream() {
+        if (!window.isRankMode || !renderer.maps || !renderer.maps[0]) return;
+        const currentX = physics.predictedState.x;
+        if (currentX > rankLastPipeX - 1200) {
+            const nextBatch = generateRankPipes(rankNextPipeIdx, rankLastPipeX, 15);
+            rankLastPipeX = nextBatch.nextStartX;
+            rankNextPipeIdx = nextBatch.nextPipeIndex;
+            renderer.maps[0].pipes.push(...nextBatch.pipes);
+
+            // Prune old pipes that are far behind player to keep memory minimal
+            if (renderer.maps[0].pipes.length > 50) {
+                renderer.maps[0].pipes = renderer.maps[0].pipes.filter(p => p.x > currentX - 600);
+            }
+        }
+    }
+
+    function checkRankCollisions() {
+        if (!window.isRankMode || !gameLoopRunning) return false;
+
+        const state = physics.predictedState;
+        const birdWidth = physics.birdWidth || 34;
+        const birdHeight = physics.birdHeight || 24;
+
+        // Ground collision (Instant Death)
+        if (state.y + birdHeight >= physics.groundY) {
+            return true;
+        }
+
+        // Ceiling clamping
+        if (state.y < 0) {
+            state.y = 0;
+            state.velocityY = 0;
+        }
+
+        // Pipe collision
+        if (renderer.maps && renderer.maps[0] && renderer.maps[0].pipes) {
+            const pipes = renderer.maps[0].pipes;
+            // 3px grace box for fair pixel collision
+            const birdBox = {
+                x: state.x + 3,
+                y: state.y + 3,
+                width: birdWidth - 6,
+                height: birdHeight - 6
+            };
+
+            for (let pipe of pipes) {
+                if (pipe.x > state.x + 80 || pipe.x + pipe.width < state.x - 40) continue;
+
+                const topPipeBox = { x: pipe.x, y: pipe.topY, width: pipe.width, height: pipe.height };
+                const bottomPipeBox = { x: pipe.x, y: pipe.bottomY, width: pipe.width, height: pipe.height };
+
+                const hitTop = (birdBox.x < topPipeBox.x + topPipeBox.width &&
+                                birdBox.x + birdBox.width > topPipeBox.x &&
+                                birdBox.y < topPipeBox.y + topPipeBox.height &&
+                                birdBox.y + birdBox.height > topPipeBox.y);
+
+                const hitBottom = (birdBox.x < bottomPipeBox.x + bottomPipeBox.width &&
+                                   birdBox.x + birdBox.width > bottomPipeBox.x &&
+                                   birdBox.y < bottomPipeBox.y + bottomPipeBox.height &&
+                                   birdBox.y + birdBox.height > bottomPipeBox.y);
+
+                if (hitTop || hitBottom) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    function checkRankScoring() {
+        if (!window.isRankMode || !gameLoopRunning) return;
+
+        const state = physics.predictedState;
+        if (renderer.maps && renderer.maps[0] && renderer.maps[0].pipes) {
+            const pipes = renderer.maps[0].pipes;
+            for (let pipe of pipes) {
+                if (!pipe.scored && state.x > pipe.x + pipe.width) {
+                    pipe.scored = true;
+                    window.rankCurrentScore += 1;
+                    audioManager.playSFX("point");
+                }
+            }
+        }
+    }
+
+    function startRankMode() {
+        window.isRankMode = true;
+        window.rankCurrentScore = 0;
+        rankLastPipeX = 420;
+        rankNextPipeIdx = 1;
+
+        audioManager.playBGM();
+
+        // Reset physics
+        physics.resetLocalState(100, 320);
+        physics.clearRemotePlayers();
+        physics.localHeldItem = null;
+        updateInventoryUI(null);
+
+        // Hide multiplayer-specific HUD elements
+        if (hudInventory) hudInventory.style.display = "none";
+        if (finishTimerBanner) finishTimerBanner.style.display = "none";
+        if (hudPipeCount && hudPipeCount.parentElement) hudPipeCount.parentElement.style.display = "none";
+        if (hudActivityFeed) hudActivityFeed.innerHTML = "";
+
+        // Generate pipes
+        const initialBatch = generateRankPipes(1, 420, 25);
+        rankLastPipeX = initialBatch.nextStartX;
+        rankNextPipeIdx = initialBatch.nextPipeIndex;
+
+        // Set renderer data
+        renderer.setGameData([{ theme_id: "classic_day", pipes: initialBatch.pipes }], [], [], 0, "rank");
+
+        // Transition to game view & start loop
+        showScreen("gameView");
+        startGameLoop();
+    }
+
+    function handleRankGameOver() {
+        stopGameLoop();
+        audioManager.playSFX("hit");
+        audioManager.playSFX("die");
+        renderer.triggerDeathEffect(physics.predictedState.x, physics.predictedState.y, true, "GAME OVER");
+
+        const currentName = (nameInput && nameInput.value) ? nameInput.value.trim() : "FlappyHero";
+        const result = recordRankScore(currentName, window.rankCurrentScore || 0);
+
+        setTimeout(() => {
+            showRankResultsUI(result);
+        }, 500);
+    }
+
+    function showRankResultsUI(result) {
+        showScreen("resultsView");
+        updateResultsHostState();
+
+        resultsMainHeader.textContent = "🏆 RANK MODE (SOLO)";
+        resultsSubHeader.style.display = "block";
+        resultsSubHeader.innerHTML = `YOUR SCORE: <strong style="color: #55b02e; font-size: 14px;">${window.rankCurrentScore || 0}</strong> | RANK: <strong style="color: #f7d51d; font-size: 14px;">#${result.playerRank}</strong>`;
+
+        leaderboardHead.innerHTML = `
+            <tr>
+                <th>RANK</th>
+                <th>PLAYER</th>
+                <th>SCORE</th>
+            </tr>
+        `;
+
+        leaderboardBody.innerHTML = "";
+        for (let i = 0; i < result.leaderboard.length; i++) {
+            const entry = result.leaderboard[i];
+            const rankNum = i + 1;
+            let rankMedal = `#${rankNum}`;
+            if (rankNum === 1) rankMedal = "🥇 #1";
+            else if (rankNum === 2) rankMedal = "🥈 #2";
+            else if (rankNum === 3) rankMedal = "🥉 #3";
+
+            const isCurrent = (entry === result.newEntry) || 
+                              (entry.timestamp && result.newEntry && entry.timestamp === result.newEntry.timestamp);
+
+            const tr = document.createElement("tr");
+            if (isCurrent) {
+                tr.className = "current-player-rank-row";
+            }
+
+            tr.innerHTML = `
+                <td><strong style="color: ${rankNum <= 3 ? '#f7d51d' : '#000'};">${rankMedal}</strong></td>
+                <td><strong>${escapeHtml(entry.name)}</strong>${isCurrent ? ' <span class="badge badge-ready">YOU</span>' : ''}</td>
+                <td><span style="color: #55b02e; font-weight: bold;">${entry.score}</span></td>
+            `;
+            leaderboardBody.appendChild(tr);
+        }
+
+        btnPlayAgain.style.display = "block";
+        btnReturnToLobby.style.display = "none";
+        waitingHostText.style.display = "none";
+        btnResultsExitMenu.style.display = "block";
+    }
 
     // Create & Join Lobby Actions
     btnCreateLobby.addEventListener("click", () => {
@@ -359,11 +902,14 @@ document.addEventListener("DOMContentLoaded", () => {
     btnConfirmExit.addEventListener("click", () => {
         modals.confirmExit.classList.remove("active");
         stopGameLoop();
-        if (currentLobby) {
+        if (window.isRankMode) {
+            window.isRankMode = false;
+        } else if (currentLobby) {
             sendWs("leave_lobby");
             currentLobby = null;
         }
         clearLocalPlayerState();
+        resetMainMenuUI();
         showScreen("mainMenu");
     });
 
@@ -404,6 +950,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Post-Match Controls
     btnPlayAgain.addEventListener("click", () => {
+        if (window.isRankMode) {
+            startRankMode();
+            return;
+        }
         sendWs("play_again");
     });
 
@@ -414,11 +964,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnResultsExitMenu) {
         btnResultsExitMenu.addEventListener("click", () => {
             stopGameLoop();
-            if (currentLobby) {
+            if (window.isRankMode) {
+                window.isRankMode = false;
+            } else if (currentLobby) {
                 sendWs("leave_lobby");
                 currentLobby = null;
             }
             clearLocalPlayerState();
+            resetMainMenuUI();
             showScreen("mainMenu");
         });
     }
@@ -560,13 +1113,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateInventoryUI(itemType) {
         if (!hudInventory) return;
-        if (currentLobby && currentLobby.mode_id === "flappy_chained") {
-            hudInventory.style.display = "none";
-            return;
-        }
         hudInventory.style.display = "flex";
 
+        const now = Date.now();
+        const cdUntil = window.localItemPickupCooldownUntil || (physics && physics.localItemPickupCooldownUntil);
+        const isCooldown = (!itemType && cdUntil && cdUntil > now);
+        const itemFabHint = document.getElementById("item-fab-hint");
+
         if (itemType) {
+            hudInventory.classList.add("has-item");
+            hudInventory.classList.remove("item-cooldown");
             inventoryEmptyLabel.style.display = "none";
             inventoryItemIcon.style.display = "block";
             const itemMap = {
@@ -579,58 +1135,183 @@ document.addEventListener("DOMContentLoaded", () => {
                 ice: "assets/images/items/ice.png"
             };
             inventoryItemIcon.src = itemMap[itemType] || `assets/images/items/item_${itemType}.svg`;
-        } else {
+            if (itemFabHint) itemFabHint.innerText = "TAP TO USE";
+        } else if (isCooldown) {
+            hudInventory.classList.remove("has-item");
+            hudInventory.classList.add("item-cooldown");
             inventoryItemIcon.style.display = "none";
             inventoryEmptyLabel.style.display = "inline";
-            inventoryEmptyLabel.innerText = "EMPTY";
+            const remainingSec = Math.max(0.1, ((cdUntil - now) / 1000)).toFixed(1);
+            inventoryEmptyLabel.innerText = `CD ${remainingSec}s`;
+            if (itemFabHint) itemFabHint.innerText = "COOLDOWN";
+        } else {
+            hudInventory.classList.remove("has-item");
+            hudInventory.classList.remove("item-cooldown");
+            inventoryItemIcon.style.display = "none";
+            inventoryEmptyLabel.style.display = "inline";
+            inventoryEmptyLabel.innerText = "ITEM";
+            if (itemFabHint) itemFabHint.innerText = "TAP TO USE";
         }
     }
 
-    // In-Game Jump & Item Input Listener
+    function updateDashUI() {
+        if (!hudDash) return;
+        const now = Date.now();
+        const cdUntil = physics && physics.localDashCooldownUntil;
+        if (cdUntil && cdUntil > now) {
+            hudDash.classList.add("dash-cooldown");
+            if (dashCooldownOverlay) {
+                const remainingSec = Math.max(0.1, ((cdUntil - now) / 1000)).toFixed(1);
+                dashCooldownOverlay.innerText = `${remainingSec}s`;
+            }
+            if (dashFabHint) dashFabHint.innerText = "COOLDOWN";
+        } else {
+            hudDash.classList.remove("dash-cooldown");
+            if (dashCooldownOverlay) dashCooldownOverlay.innerText = "";
+            if (dashFabHint) dashFabHint.innerText = "SHIFT / D";
+        }
+    }
+
+    // In-Game Jump, Dash & Item Input Listeners
     function handleJumpInput() {
         if (!gameLoopRunning) return;
-        if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA")) {
+        if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT")) {
             return;
         }
         const input = physics.handleLocalJump();
+        if (!input) return;
         audioManager.playSFX("wing");
-        sendWs("player_input", input);
+        if (!window.isRankMode) {
+            sendWs("player_input", input);
+        }
     }
 
+    function handleDashInput() {
+        if (!gameLoopRunning) return;
+        if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT")) {
+            return;
+        }
+        const input = physics.handleLocalDash();
+        if (!input) return;
+
+        audioManager.playSFX("swooshing");
+        if (renderer && typeof renderer.triggerDashEffect === "function") {
+            renderer.triggerDashEffect(physics.predictedState.x, physics.predictedState.y, window.playerSkinId || 0, true);
+        }
+
+        if (!window.isRankMode) {
+            sendWs("player_input", input);
+            sendWs("player_dash");
+        }
+        updateDashUI();
+    }
+
+    function handleUseItemInput() {
+        if (gameLoopRunning && physics.localHeldItem) {
+            sendWs("use_item");
+        }
+    }
+
+    // Keyboard Shortcuts (Desktop Controls)
     window.addEventListener("keydown", (e) => {
         const activeTag = document.activeElement ? document.activeElement.tagName : "";
-        if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
+        if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
 
         if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyX") {
             handleJumpInput();
         }
 
+        if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.code === "KeyD" || e.key === "d" || e.key === "D" || e.code === "KeyE" || e.key === "e" || e.key === "E") {
+            e.preventDefault();
+            handleDashInput();
+        }
+
         if (e.code === "KeyF" || e.key === "f" || e.key === "F") {
             e.preventDefault();
-            if (gameLoopRunning && physics.localHeldItem) {
-                sendWs("use_item");
-            }
+            handleUseItemInput();
         }
     });
 
-    canvas.addEventListener("mousedown", () => {
-        handleJumpInput();
-    });
+    // Helper: Determine if an event target is an interactive UI control
+    function isInteractiveTarget(target) {
+        if (!target) return false;
+        return !!target.closest("#hud-inventory, #hud-dash, #inventory-slot, #dash-slot, #btn-item-action, #btn-in-game-exit, .modal, #network-indicator, #network-debug-panel, button, input, select, textarea");
+    }
 
-    canvas.addEventListener("touchstart", (e) => {
-        e.preventDefault();
+    // Global Screen Tap / Click to Flap (Mobile & Desktop)
+    const screenGameEl = screens.gameView;
+    let lastGlobalJumpTime = 0;
+
+    function handleGlobalTap(e) {
+        if (!gameLoopRunning) return;
+        if (isInteractiveTarget(e.target)) return;
+
+        // Only left mouse clicks or touches
+        if (e.button !== undefined && e.button !== 0) return;
+
+        // Debounce touch/mouse synthesized event duplicates within 80ms
+        const now = performance.now();
+        if (now - lastGlobalJumpTime < 80) return;
+        lastGlobalJumpTime = now;
+
         handleJumpInput();
-    }, { passive: false });
+    }
+
+    // Pointerdown on game screen triggers global flap anywhere on screen
+    screenGameEl.addEventListener("pointerdown", handleGlobalTap);
+
+    // Floating Action Item Button Touch / Click Listener
+    if (hudInventory) {
+        hudInventory.addEventListener("pointerdown", (e) => {
+            // Stop propagation to prevent global jump
+            e.stopPropagation();
+        });
+
+        hudInventory.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            handleUseItemInput();
+        });
+    }
+
+    // Floating Action Dash Button Touch / Click Listener
+    if (hudDash) {
+        hudDash.addEventListener("pointerdown", (e) => {
+            e.stopPropagation();
+        });
+
+        hudDash.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            handleDashInput();
+        });
+    }
 
     // 60 FPS Client Game Render & Prediction Loop
     function startGameLoop() {
+        applyResponsiveLayout();
         gameLoopRunning = true;
 
         function step(now) {
             if (!gameLoopRunning) return;
 
             physics.updateLocalPhysics();
-            physics.updateRemotePlayers();
+
+            if (window.isRankMode) {
+                if (checkRankCollisions()) {
+                    handleRankGameOver();
+                    return;
+                }
+                checkRankScoring();
+                checkRankPipeStream();
+            } else {
+                physics.updateRemotePlayers();
+                if (!physics.localHeldItem && (window.localItemPickupCooldownUntil || physics.localItemPickupCooldownUntil)) {
+                    updateInventoryUI(null);
+                }
+                updateDashUI();
+            }
+
             renderer.render(now);
 
             animationFrameId = requestAnimationFrame(step);
@@ -648,13 +1329,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // CENTRALIZED NATIVE WEBSOCKET MESSAGE DISPATCHER
-    function handleSocketMessage(event) {
+    function handleSocketMessage(eventOrMsg) {
         let msg;
-        try {
-            msg = JSON.parse(event.data);
-        } catch (err) {
-            console.error("[WebSocket] Failed to parse message:", err);
-            return;
+        if (eventOrMsg && eventOrMsg.type && eventOrMsg.data !== undefined && typeof eventOrMsg.data !== "string") {
+            msg = eventOrMsg;
+        } else if (eventOrMsg && eventOrMsg.data) {
+            try {
+                msg = typeof eventOrMsg.data === "string" ? JSON.parse(eventOrMsg.data) : eventOrMsg.data;
+            } catch (err) {
+                console.error("[WebSocket] Failed to parse message:", err);
+                return;
+            }
+        } else {
+            msg = eventOrMsg || {};
         }
 
         const { type, data = {} } = msg;
@@ -761,6 +1448,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const chainedOffset = (currentLobby.mode_id === "flappy_chained") ? (myChainIdx * 60) : 0;
 
                 physics.resetLocalState(startX - chainedOffset, startY);
+                window.localItemPickupCooldownUntil = null;
                 physics.isFrozen = true;
                 startGameLoop();
 
@@ -813,8 +1501,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             case "item_collected": {
                 audioManager.playSFX("point");
-                if (data.playerId === localPlayerId && data.acquiredItem) {
-                    physics.localHeldItem = data.acquiredItem;
+                if (data.playerId === localPlayerId) {
+                    physics.localHeldItem = data.acquiredItem || null;
+                    window.localItemPickupCooldownUntil = data.pickupCooldownUntil || (Date.now() + 3000);
+                    physics.localItemPickupCooldownUntil = window.localItemPickupCooldownUntil;
                     updateInventoryUI(data.acquiredItem);
                 }
                 if (renderer && renderer.itemBoxes) {
@@ -822,6 +1512,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (targetBox) {
                         targetBox.collected = true;
                         targetBox.isActive = false;
+                        if (typeof renderer.triggerItemBoxCollectEffect === "function") {
+                            renderer.triggerItemBoxCollectEffect(targetBox.x, targetBox.y, data.acquiredItem, data.playerId === localPlayerId);
+                        }
                     }
                 }
                 break;
@@ -839,11 +1532,21 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             case "shield_expired": {
+                let targetX = null;
+                let targetY = null;
                 if (data && data.playerId === localPlayerId) {
                     physics.localHasShield = false;
+                    targetX = physics.predictedState.x;
+                    targetY = physics.predictedState.y;
                 }
                 if (physics.remotePlayers.has(data.playerId)) {
-                    physics.remotePlayers.get(data.playerId).hasShield = false;
+                    const rp = physics.remotePlayers.get(data.playerId);
+                    rp.hasShield = false;
+                    targetX = rp.x;
+                    targetY = rp.y;
+                }
+                if (renderer && typeof renderer.triggerShieldBreakEffect === "function" && targetX !== null && targetY !== null) {
+                    renderer.triggerShieldBreakEffect(targetX, targetY);
                 }
                 break;
             }
@@ -854,6 +1557,27 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 if (physics.remotePlayers.has(data.playerId)) {
                     physics.remotePlayers.get(data.playerId).isInvincible = false;
+                }
+                break;
+            }
+
+            case "player_dashed": {
+                if (!data) break;
+                if (data.playerId !== localPlayerId) {
+                    const rp = physics.remotePlayers.get(data.playerId);
+                    if (rp) {
+                        rp.x = data.x;
+                        rp.y = data.y;
+                        rp.dashCooldownUntil = data.dashCooldownUntil;
+                        if (renderer && typeof renderer.triggerDashEffect === "function") {
+                            renderer.triggerDashEffect(data.x, data.y, rp.skin_ID || 0, false);
+                        }
+                    }
+                } else {
+                    if (data.dashCooldownUntil) {
+                        physics.localDashCooldownUntil = data.dashCooldownUntil;
+                        updateDashUI();
+                    }
                 }
                 break;
             }
@@ -871,6 +1595,20 @@ document.addEventListener("DOMContentLoaded", () => {
                         addActivityFeedLog(`<span style="color: #f7d51d;">${escapeHtml(data.userName)}</span> used ${(data.itemType || "ITEM").toUpperCase()} <span style="color: #888;">(WASTED)</span>`);
                     } else if (data.shieldBlocked) {
                         addActivityFeedLog(`<span style="color: #55b02e;">${escapeHtml(data.targetName)}</span>'s SHIELD blocked <span style="color: #f7d51d;">${escapeHtml(data.userName)}</span>'s ${(data.itemType || "ITEM").toUpperCase()}`);
+                        if (renderer && typeof renderer.triggerShieldBreakEffect === "function") {
+                            let tx = null, ty = null;
+                            if (data.targetId === localPlayerId) {
+                                tx = physics.predictedState.x;
+                                ty = physics.predictedState.y;
+                            } else if (physics.remotePlayers.has(data.targetId)) {
+                                const rp = physics.remotePlayers.get(data.targetId);
+                                tx = rp.x;
+                                ty = rp.y;
+                            }
+                            if (tx !== null && ty !== null) {
+                                renderer.triggerShieldBreakEffect(tx, ty);
+                            }
+                        }
                     } else {
                         const userStr = `<span style="color: #f7d51d;">${escapeHtml(data.userName)}</span>`;
                         const targetStr = `<span style="color: #ffffff;">${escapeHtml(data.targetName || "Target")}</span>`;
@@ -880,26 +1618,43 @@ document.addEventListener("DOMContentLoaded", () => {
                         } else if (data.itemType === "shield") {
                             addActivityFeedLog(`${userStr} activated <span style="color: #3993d0;">SHIELD</span>`);
                         } else if (data.itemType === "swap") {
-                            addActivityFeedLog(`${userStr} <span style="color: #f7d51d;">SWAPPED</span> position with ${targetStr}`);
-                            if (renderer && typeof renderer.triggerSwapEffect === "function") {
-                                let uX = 0, uY = 0, tX = 0, tY = 0;
-                                if (data.userId === localPlayerId) {
-                                    uX = physics.predictedState.x;
-                                    uY = physics.predictedState.y;
-                                } else if (physics.remotePlayers.has(data.userId)) {
-                                    const rp = physics.remotePlayers.get(data.userId);
-                                    uX = rp.x;
-                                    uY = rp.y;
+                            if (data.isChaosSwap) {
+                                addActivityFeedLog(`${userStr} triggered <span style="color: #ff007f; font-weight: bold;">CHAOS POSITION SWAP!</span> 🌀`);
+                                audioManager.playSFX("swooshing");
+                                if (renderer && typeof renderer.triggerChaosSwapEffect === "function") {
+                                    renderer.triggerChaosSwapEffect(data.swappedPlayers);
                                 }
-                                if (data.targetId === localPlayerId) {
-                                    tX = physics.predictedState.x;
-                                    tY = physics.predictedState.y;
-                                } else if (physics.remotePlayers.has(data.targetId)) {
-                                    const rp = physics.remotePlayers.get(data.targetId);
-                                    tX = rp.x;
-                                    tY = rp.y;
+                                if (data.swappedPlayers) {
+                                    const mySwap = data.swappedPlayers.find(sp => sp.playerId === localPlayerId);
+                                    if (mySwap) {
+                                        physics.predictedState.x = mySwap.x;
+                                        physics.predictedState.y = mySwap.y;
+                                        physics.predictedState.velocityY = 0;
+                                        physics.pendingInputs = [];
+                                    }
                                 }
-                                renderer.triggerSwapEffect(uX, uY, tX, tY, data.userName, data.targetName);
+                            } else {
+                                addActivityFeedLog(`${userStr} <span style="color: #f7d51d;">SWAPPED</span> position with ${targetStr}`);
+                                if (renderer && typeof renderer.triggerSwapEffect === "function") {
+                                    let uX = 0, uY = 0, tX = 0, tY = 0;
+                                    if (data.userId === localPlayerId) {
+                                        uX = physics.predictedState.x;
+                                        uY = physics.predictedState.y;
+                                    } else if (physics.remotePlayers.has(data.userId)) {
+                                        const rp = physics.remotePlayers.get(data.userId);
+                                        uX = rp.x;
+                                        uY = rp.y;
+                                    }
+                                    if (data.targetId === localPlayerId) {
+                                        tX = physics.predictedState.x;
+                                        tY = physics.predictedState.y;
+                                    } else if (physics.remotePlayers.has(data.targetId)) {
+                                        const rp = physics.remotePlayers.get(data.targetId);
+                                        tX = rp.x;
+                                        tY = rp.y;
+                                    }
+                                    renderer.triggerSwapEffect(uX, uY, tX, tY, data.userName, data.targetName);
+                                }
                             }
                         } else if (data.itemType === "ink") {
                             addActivityFeedLog(`${userStr} used <span style="color: #e07629;">BUCKET</span> on ${targetStr}`);
@@ -912,6 +1667,12 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (data.targetId === localPlayerId) audioManager.playSFX("hit");
                         } else if (data.itemType === "deathnote") {
                             addActivityFeedLog(`${userStr} used <span style="color: #d9534f;">DEATH NOTE</span> on ${targetStr}`);
+                            if (data.userId === localPlayerId) {
+                                // Attacker who used Death Note does NOT get any screen overlay
+                                window.deathnoteEffectUntil = 0;
+                                window.deathnoteBannerText = "";
+                                window.deathnoteSubText = "";
+                            }
                             if (renderer && typeof renderer.triggerDeathEffect === "function") {
                                 let targetX = 0, targetY = 0;
                                 const isLocalTarget = (data.targetId === localPlayerId);
@@ -947,9 +1708,88 @@ document.addEventListener("DOMContentLoaded", () => {
 
             case "deathnote_announcement": {
                 if (!data) break;
-                audioManager.playSFX("hit");
-                window.deathnoteEffectUntil = Date.now() + 2000;
-                window.deathnoteBannerText = `${data.attackerName} used DEATH NOTE on ${data.targetName}!`;
+                // Only show screen overlay and hit sound on the target who was struck!
+                // The user who used it and all other players will NOT have anything appear on their screen.
+                const isTarget = (data.targetId && data.targetId === localPlayerId) || 
+                                 (!data.targetId && (
+                                     (physics && physics.localPlayerId === data.targetId) ||
+                                     (currentLobby && currentLobby.players && currentLobby.players.find(p => p.player_id === localPlayerId)?.name === data.targetName)
+                                 ));
+
+                if (isTarget) {
+                    audioManager.playSFX("hit");
+                    window.deathnoteEffectUntil = Date.now() + 2500;
+                    window.deathnoteBannerText = `${data.targetName} STRUCK BY DEATH NOTE!`;
+                    window.deathnoteSubText = `USED BY ${data.attackerName || "AN OPPONENT"}`;
+                } else {
+                    window.deathnoteEffectUntil = 0;
+                    window.deathnoteBannerText = "";
+                    window.deathnoteSubText = "";
+                }
+                break;
+            }
+
+            case "player_knocked_down": {
+                if (!data) break;
+                const isLocal = (data.playerId === localPlayerId);
+                if (isLocal) {
+                    audioManager.playSFX("hit");
+                    physics.triggerKnockdown(data.x, data.y, data.knockdownDurationMs || 5000);
+                    if (renderer && typeof renderer.triggerKnockdownEffect === "function") {
+                        renderer.triggerKnockdownEffect(data.x || physics.predictedState.x, data.y || physics.predictedState.y, true);
+                    }
+                    addActivityFeedLog(`<span style="color: #d9534f;">YOU</span> got KNOCKED DOWN! (5s)`);
+                } else {
+                    if (physics.remotePlayers.has(data.playerId)) {
+                        physics.triggerRemoteKnockdown(data.playerId, data.x, data.y, data.knockdownDurationMs || 5000);
+                        const rp = physics.remotePlayers.get(data.playerId);
+                        if (renderer && typeof renderer.triggerKnockdownEffect === "function") {
+                            renderer.triggerKnockdownEffect(data.x || rp.x, data.y || rp.y, false);
+                        }
+                        addActivityFeedLog(`<span style="color: #ffffff;">${escapeHtml(rp.name)}</span> got KNOCKED DOWN!`);
+                    }
+                }
+                break;
+            }
+
+            case "player_ready_to_fly": {
+                if (!data) break;
+                const isLocal = (data.playerId === localPlayerId);
+                if (isLocal) {
+                    physics.localIsReadyToFly = true;
+                    audioManager.playSFX("point");
+                    addActivityFeedLog(`<span style="color: #55b02e;">READY TO FLY!</span> Tap to flap!`);
+                } else {
+                    if (physics.remotePlayers.has(data.playerId)) {
+                        const rp = physics.remotePlayers.get(data.playerId);
+                        rp.isReadyToFly = true;
+                    }
+                }
+                break;
+            }
+
+            case "player_recovered": {
+                if (!data) break;
+                const isLocal = (data.playerId === localPlayerId);
+                if (isLocal) {
+                    physics.localIsKnockedDown = false;
+                    physics.localIsReadyToFly = false;
+                    physics.localKnockdownUntil = null;
+                    physics.localIsInvincible = true;
+                    physics.localInvincibleUntil = Date.now() + (data.invincibleMs || 4000);
+                    audioManager.playSFX("wing");
+                    addActivityFeedLog(`<span style="color: #f7d51d;">YOU</span> RECOVERED! <span style="color: #55b02e;">[4s Shield]</span>`);
+                } else {
+                    if (physics.remotePlayers.has(data.playerId)) {
+                        const rp = physics.remotePlayers.get(data.playerId);
+                        rp.isKnockedDown = false;
+                        rp.isReadyToFly = false;
+                        rp.knockdownUntil = null;
+                        rp.isInvincible = true;
+                        rp.invincibleUntil = Date.now() + (data.invincibleMs || 4000);
+                        addActivityFeedLog(`<span style="color: #ffffff;">${escapeHtml(rp.name)}</span> RECOVERED! [4s Shield]`);
+                    }
+                }
                 break;
             }
 
@@ -1043,6 +1883,122 @@ document.addEventListener("DOMContentLoaded", () => {
                 console.warn(`[WebSocket] Central router received unknown message type: ${type}`);
         }
     };
+
+    // Network Diagnostics & Simulator UI Bindings
+    const netPingDot = document.getElementById("net-ping-dot");
+    const netPingText = document.getElementById("net-ping-text");
+    const netQualityBadge = document.getElementById("net-quality-badge");
+    const btnToggleNetDebug = document.getElementById("btn-toggle-net-debug");
+    const netTooltipRtt = document.getElementById("net-tooltip-rtt");
+    const netTooltipSrtt = document.getElementById("net-tooltip-srtt");
+    const netTooltipMinmax = document.getElementById("net-tooltip-minmax");
+    const netTooltipJitter = document.getElementById("net-tooltip-jitter");
+
+    const netDebugPanel = document.getElementById("network-debug-panel");
+    const btnCloseNetDebug = document.getElementById("btn-close-net-debug");
+    const netSimEnable = document.getElementById("net-sim-enable");
+    const sliderNetLatency = document.getElementById("slider-net-latency");
+    const sliderNetJitter = document.getElementById("slider-net-jitter");
+    const sliderNetDrop = document.getElementById("slider-net-drop");
+    const selectNetDirection = document.getElementById("select-net-direction");
+    const labelNetLatency = document.getElementById("label-net-latency");
+    const labelNetJitter = document.getElementById("label-net-jitter");
+    const labelNetDrop = document.getElementById("label-net-drop");
+    const netSimStatusText = document.getElementById("net-sim-status-text");
+    const btnResetNetSim = document.getElementById("btn-reset-net-sim");
+
+    function updateNetworkIndicatorUI(status) {
+        if (!netPingDot || !status) return;
+        netPingDot.style.backgroundColor = status.color || "#888";
+        if (netPingText) netPingText.textContent = `PING: ${status.rttText}`;
+        if (netQualityBadge) {
+            netQualityBadge.textContent = status.text;
+            netQualityBadge.style.backgroundColor = (status.status === "GOOD") ? "#2b6313" : ((status.status === "FAIR") ? "#9c7c10" : ((status.status === "HIGH") ? "#962d2a" : "#444"));
+        }
+        if (netTooltipRtt) netTooltipRtt.textContent = status.rtt !== null ? `${status.rtt}ms` : "--";
+        if (netTooltipSrtt) netTooltipSrtt.textContent = status.srtt !== null ? `${status.srtt}ms` : "--";
+        if (netTooltipMinmax) netTooltipMinmax.textContent = (status.minRtt !== null && status.maxRtt !== null) ? `${status.minRtt}ms / ${status.maxRtt}ms` : "-- / --";
+        if (netTooltipJitter) netTooltipJitter.textContent = status.jitter !== null ? `±${status.jitter}ms` : "--";
+    }
+
+    function updateSimulatorUI() {
+        if (!netSimStatusText) return;
+        if (labelNetLatency && sliderNetLatency) labelNetLatency.textContent = `${sliderNetLatency.value} ms`;
+        if (labelNetJitter && sliderNetJitter) labelNetJitter.textContent = `${sliderNetJitter.value} ms`;
+        if (labelNetDrop && sliderNetDrop) labelNetDrop.textContent = `${sliderNetDrop.value} %`;
+
+        const isEnabled = netSimEnable ? netSimEnable.checked : false;
+        const latencyVal = sliderNetLatency ? Number(sliderNetLatency.value) : 0;
+        const jitterVal = sliderNetJitter ? Number(sliderNetJitter.value) : 0;
+        const dropVal = sliderNetDrop ? Number(sliderNetDrop.value) : 0;
+        const dirVal = selectNetDirection ? selectNetDirection.value : "both";
+
+        if (isEnabled && (latencyVal > 0 || jitterVal > 0 || dropVal > 0)) {
+            netSimStatusText.textContent = `ACTIVE (${latencyVal}ms ±${jitterVal}ms, ${dropVal}% drop, ${dirVal})`;
+            netSimStatusText.style.color = "#f7d51d";
+        } else if (isEnabled) {
+            netSimStatusText.textContent = "ENABLED (0ms latency, 0% drop)";
+            netSimStatusText.style.color = "#f7d51d";
+        } else {
+            netSimStatusText.textContent = "OFF (PASS-THROUGH)";
+            netSimStatusText.style.color = "#74bf2e";
+        }
+
+        if (networkSimulator) {
+            networkSimulator.setOptions({
+                enabled: isEnabled,
+                latency: latencyVal,
+                jitter: jitterVal,
+                dropRate: dropVal,
+                direction: dirVal
+            });
+        }
+    }
+
+    // Only reveal simulator controls if ?debug=network is explicitly set in URL
+    const isDebugNetwork = urlParams.get("debug") === "network";
+    if (isDebugNetwork) {
+        if (btnToggleNetDebug) {
+            btnToggleNetDebug.style.display = "inline-block";
+            btnToggleNetDebug.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (netDebugPanel) {
+                    netDebugPanel.style.display = (netDebugPanel.style.display === "none") ? "block" : "none";
+                }
+            });
+        }
+    } else {
+        if (btnToggleNetDebug) btnToggleNetDebug.style.display = "none";
+        if (netDebugPanel) netDebugPanel.style.display = "none";
+    }
+
+    if (btnCloseNetDebug) {
+        btnCloseNetDebug.addEventListener("click", () => {
+            if (netDebugPanel) netDebugPanel.style.display = "none";
+        });
+    }
+
+    if (btnResetNetSim) {
+        btnResetNetSim.addEventListener("click", () => {
+            if (netSimEnable) netSimEnable.checked = false;
+            if (sliderNetLatency) sliderNetLatency.value = 0;
+            if (sliderNetJitter) sliderNetJitter.value = 0;
+            if (sliderNetDrop) sliderNetDrop.value = 0;
+            if (selectNetDirection) selectNetDirection.value = "both";
+            if (networkSimulator) networkSimulator.reset();
+            updateSimulatorUI();
+        });
+    }
+
+    [netSimEnable, sliderNetLatency, sliderNetJitter, sliderNetDrop, selectNetDirection].forEach(el => {
+        if (el) {
+            el.addEventListener("input", updateSimulatorUI);
+            el.addEventListener("change", updateSimulatorUI);
+        }
+    });
+
+    updateSimulatorUI();
+    if (pingTracker) updateNetworkIndicatorUI(pingTracker.getStatus());
 
     updateCustomizationUI();
 });

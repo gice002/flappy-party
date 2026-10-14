@@ -490,6 +490,17 @@ class LobbyManager {
         }
     }
 
+    handlePlayerDash(socket) {
+        const socketId = this.getSocketId(socket);
+        const lobbyId = this.playerLobbyMap.get(socketId);
+        if (!lobbyId) return;
+
+        const engine = this.gameEngines.get(lobbyId);
+        if (engine) {
+            engine.queueInput(socketId, { action: "dash" });
+        }
+    }
+
     returnToLobby(socket) {
         const socketId = this.getSocketId(socket);
         const lobbyId = this.playerLobbyMap.get(socketId);
@@ -577,7 +588,45 @@ class LobbyManager {
         }
 
         if (usedItem === "swap") {
-            // Pick a random active opponent in lobby
+            if (lobby.mode_id === "flappy_chained") {
+                // Random Position Swap: Shuffle ALL active players in the room!
+                const activePlayers = Array.from(lobby.players.values()).filter(p => p.is_alive && !p.is_finished);
+                if (activePlayers.length < 2) {
+                    this.broadcastToRoom(lobby.Lobby_id, "item_used", {
+                        userId: player.player_id,
+                        userName: player.name,
+                        itemType: "swap",
+                        wasted: true
+                    });
+                    return;
+                }
+
+                // Collect positions and permute them randomly
+                const positions = activePlayers.map(p => ({ x: p.x, y: p.y, velocityY: p.velocityY }));
+                for (let i = positions.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [positions[i], positions[j]] = [positions[j], positions[i]];
+                }
+
+                const swappedList = [];
+                activePlayers.forEach((p, idx) => {
+                    p.x = positions[idx].x;
+                    p.y = positions[idx].y;
+                    p.velocityY = positions[idx].velocityY;
+                    swappedList.push({ playerId: p.player_id, name: p.name, x: p.x, y: p.y });
+                });
+
+                this.broadcastToRoom(lobby.Lobby_id, "item_used", {
+                    userId: player.player_id,
+                    userName: player.name,
+                    itemType: "swap",
+                    isChaosSwap: true,
+                    swappedPlayers: swappedList
+                });
+                return;
+            }
+
+            // Flappy Race mode: Pick a random active opponent in lobby
             const opponents = Array.from(lobby.players.values()).filter(p => p.player_id !== player.player_id && p.is_alive && !p.is_finished);
             if (opponents.length === 0) {
                 this.broadcastToRoom(lobby.Lobby_id, "item_used", {
@@ -635,27 +684,36 @@ class LobbyManager {
         }
 
         if (usedItem === "ink" || usedItem === "curse" || usedItem === "deathnote" || usedItem === "ice") {
-            // Find 1st place player (max X position among active non-finished players)
             let firstPlacePlayer = null;
-            let maxX = -1;
-            for (let p of lobby.players.values()) {
-                if (p.is_alive && !p.is_finished && p.x > maxX) {
-                    maxX = p.x;
-                    firstPlacePlayer = p;
-                }
-            }
 
-            // If user is 1st place when using targeted attack, target 2nd place or waste if solo
-            if (firstPlacePlayer && firstPlacePlayer.player_id === player.player_id) {
-                let secondPlacePlayer = null;
-                let secondMaxX = -1;
+            if (lobby.mode_id === "flappy_chained") {
+                // In Chained Mode, target other active teammates
+                const teammates = Array.from(lobby.players.values()).filter(p => p.player_id !== player.player_id && p.is_alive && !p.is_finished);
+                if (teammates.length > 0) {
+                    firstPlacePlayer = teammates[Math.floor(Math.random() * teammates.length)];
+                }
+            } else {
+                // Find 1st place player (max X position among active non-finished players)
+                let maxX = -1;
                 for (let p of lobby.players.values()) {
-                    if (p.player_id !== player.player_id && p.is_alive && !p.is_finished && p.x > secondMaxX) {
-                        secondMaxX = p.x;
-                        secondPlacePlayer = p;
+                    if (p.is_alive && !p.is_finished && p.x > maxX) {
+                        maxX = p.x;
+                        firstPlacePlayer = p;
                     }
                 }
-                firstPlacePlayer = secondPlacePlayer;
+
+                // If user is 1st place when using targeted attack, target 2nd place or waste if solo
+                if (firstPlacePlayer && firstPlacePlayer.player_id === player.player_id) {
+                    let secondPlacePlayer = null;
+                    let secondMaxX = -1;
+                    for (let p of lobby.players.values()) {
+                        if (p.player_id !== player.player_id && p.is_alive && !p.is_finished && p.x > secondMaxX) {
+                            secondMaxX = p.x;
+                            secondPlacePlayer = p;
+                        }
+                    }
+                    firstPlacePlayer = secondPlacePlayer;
+                }
             }
 
             if (!firstPlacePlayer) {
@@ -738,12 +796,17 @@ class LobbyManager {
                     duration: CURSE_DURATION_MS
                 });
             } else if (usedItem === "deathnote") {
-                // Respawn target 1st place back to last checkpoint
-                const chkObj = lobby.checkpoints.get(firstPlacePlayer.checkpoint_id) || Array.from(lobby.checkpoints.values())[0];
-                const respawnX = chkObj ? chkObj.respawn_coordinate_x : 100;
-                firstPlacePlayer.x = respawnX;
-                firstPlacePlayer.y = 320;
-                firstPlacePlayer.velocityY = 0;
+                // Knockdown target 1st place to ground instead of instant checkpoint reset
+                const engine = this.gameEngines.get(lobby.Lobby_id);
+                if (engine && typeof engine.triggerKnockdown === "function") {
+                    engine.triggerKnockdown(firstPlacePlayer);
+                } else {
+                    firstPlacePlayer.isKnockedDown = true;
+                    firstPlacePlayer.knockdownUntil = Date.now() + 5000;
+                    firstPlacePlayer.isReadyToFly = false;
+                    firstPlacePlayer.y = 592;
+                    firstPlacePlayer.velocityY = 0;
+                }
 
                 this.broadcastToRoom(lobby.Lobby_id, "item_used", {
                     userId: player.player_id,
@@ -754,7 +817,9 @@ class LobbyManager {
                 });
 
                 this.broadcastToRoom(lobby.Lobby_id, "deathnote_announcement", {
+                    attackerId: player.player_id,
                     attackerName: player.name,
+                    targetId: firstPlacePlayer.player_id,
                     targetName: firstPlacePlayer.name
                 });
             } else if (usedItem === "ice") {

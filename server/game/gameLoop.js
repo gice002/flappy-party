@@ -10,7 +10,12 @@ const {
     JUMP_VELOCITY,
     FORWARD_VELOCITY,
     CHAIN_SPACING_X,
-    ITEM_RESPAWN_MS
+    ITEM_RESPAWN_MS,
+    ITEM_PICKUP_COOLDOWN_MS,
+    DASH_COOLDOWN_MS,
+    DASH_BURST_X,
+    MAX_TETHER_DIST,
+    TETHER_SPRING_FORCE
 } = require("../config/constants");
 
 class GameEngine {
@@ -125,9 +130,29 @@ class GameEngine {
         let anyCollisionInChained = false;
         let highestCheckpointInChained = this.lobby.startCheckpointId;
 
-        // Process physics for each player
+        // Phase 1: Status checks, process input queues, and apply individual movement
         for (let player of this.lobby.players.values()) {
             if (player.is_finished) continue;
+
+            // Check Invincibility expiration (e.g. 4s post-recovery shield)
+            if (player.isInvincible && player.invincibleUntil && now >= player.invincibleUntil) {
+                player.isInvincible = false;
+                player.invincibleUntil = null;
+                this.broadcast("invincibility_expired", { playerId: player.player_id });
+            }
+
+            // Check Knockdown 5s timer
+            if (player.isKnockedDown) {
+                player.y = GROUND_Y - BIRD_HEIGHT;
+                player.velocityY = 0;
+
+                if (now >= player.knockdownUntil && !player.isReadyToFly) {
+                    player.isReadyToFly = true;
+                    this.broadcast("player_ready_to_fly", {
+                        playerId: player.player_id
+                    });
+                }
+            }
 
             // Process inputs queued for this player
             const inputs = this.inputQueues.get(player.player_id) || [];
@@ -135,20 +160,69 @@ class GameEngine {
                 const input = inputs.shift();
                 if (!input) continue; // Ignore null or undefined inputs
 
-                if (input.action === "jump" && !player.isFrozenInIce) {
-                    player.velocityY = JUMP_VELOCITY;
+                if (input.action === "jump") {
+                    if (player.isKnockedDown) {
+                        if (player.isReadyToFly) {
+                            // Flap to recover and get back into race
+                            player.isKnockedDown = false;
+                            player.isReadyToFly = false;
+                            player.knockdownUntil = null;
+                            player.velocityY = JUMP_VELOCITY;
+                            // Immediate 4-second invincibility shield
+                            player.isInvincible = true;
+                            player.invincibleUntil = now + 4000;
+
+                            this.broadcast("player_recovered", {
+                                playerId: player.player_id,
+                                x: player.x,
+                                y: player.y,
+                                invincibleMs: 4000
+                            });
+                        }
+                        // If knocked down but not ready to fly yet (within 5s), jump input is ignored
+                    } else if (!player.isFrozenInIce) {
+                        player.velocityY = JUMP_VELOCITY;
+                    }
+                } else if (input.action === "dash") {
+                    if (!player.isKnockedDown && !player.isFrozenInIce && !player.is_finished && player.is_alive) {
+                        if (!player.dashCooldownUntil || now >= player.dashCooldownUntil) {
+                            player.dashCooldownUntil = now + DASH_COOLDOWN_MS;
+                            player.x += DASH_BURST_X;
+                            player.velocityY = Math.min(player.velocityY, -1.5);
+                            this.broadcast("player_dashed", {
+                                playerId: player.player_id,
+                                x: player.x,
+                                y: player.y,
+                                dashCooldownUntil: player.dashCooldownUntil
+                            });
+                        }
+                    }
                 }
                 player.last_processed_input = input.sequence || player.last_processed_input;
             }
 
-            // Apply strict uniform forward X velocity & individual Y gravity (modified by Curse/Ice debuffs)
-            if (player.isFrozenInIce) {
+            // Apply strict uniform forward X velocity & individual Y gravity (modified by Knockdown/Curse/Ice debuffs)
+            if (player.isKnockedDown) {
+                // Forward movement is suspended during knockdown
+                player.y = GROUND_Y - BIRD_HEIGHT;
+                player.velocityY = 0;
+            } else if (player.isFrozenInIce) {
                 player.velocityY = 0;
             } else {
                 player.x += FORWARD_VELOCITY * (player.speedMultiplier || 1.0);
                 player.velocityY += GRAVITY;
                 player.y = Math.max(0, player.y + player.velocityY);
             }
+        }
+
+        // Phase 2: Chained Mode Tether Physics (apply distance constraint & tension pull between connected birds)
+        if (this.lobby.mode_id === "flappy_chained") {
+            this.applyChainedTetherPhysics();
+        }
+
+        // Phase 3: Update progress, check collisions, item boxes, and finish line
+        for (let player of this.lobby.players.values()) {
+            if (player.is_finished) continue;
 
             // Check pipe progress and update checkpoint
             this.updatePlayerProgress(player);
@@ -168,8 +242,8 @@ class GameEngine {
                         }
                     }
                 } else {
-                    // Flappy Race mode: individual respawn
-                    this.respawnPlayer(player);
+                    // Flappy Race mode: Knockdown & Recovery instead of instant death
+                    this.triggerKnockdown(player);
                 }
             }
 
@@ -225,6 +299,66 @@ class GameEngine {
         this.broadcastSnapshot();
     }
 
+    triggerPlayerDash(playerId) {
+        const player = this.lobby.players.get(playerId);
+        if (!player) return;
+        const now = Date.now();
+        if (!player.isKnockedDown && !player.isFrozenInIce && !player.is_finished && player.is_alive) {
+            if (!player.dashCooldownUntil || now >= player.dashCooldownUntil) {
+                player.dashCooldownUntil = now + DASH_COOLDOWN_MS;
+                player.x += DASH_BURST_X;
+                player.velocityY = Math.min(player.velocityY, -1.5);
+                this.broadcast("player_dashed", {
+                    playerId: player.player_id,
+                    x: player.x,
+                    y: player.y,
+                    dashCooldownUntil: player.dashCooldownUntil
+                });
+            }
+        }
+    }
+
+    applyChainedTetherPhysics() {
+        if (this.lobby.mode_id !== "flappy_chained") return;
+
+        // Collect all active non-finished players sorted strictly by chain_index
+        const chained = Array.from(this.lobby.players.values())
+            .filter(p => p.is_alive && !p.is_finished && !p.isKnockedDown)
+            .sort((a, b) => a.chain_index - b.chain_index);
+
+        if (chained.length < 2) return;
+
+        // Apply distance constraint & tension pull between adjacent chained partners
+        for (let i = 0; i < chained.length - 1; i++) {
+            const pA = chained[i];
+            const pB = chained[i + 1];
+
+            const dx = pB.x - pA.x;
+            const dy = pB.y - pA.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > MAX_TETHER_DIST && dist > 0.0001) {
+                const stretch = dist - MAX_TETHER_DIST;
+                const force = Math.min(stretch * TETHER_SPRING_FORCE, 10);
+                const nx = dx / dist;
+                const ny = dy / dist;
+
+                // Restorative pull: pulls pA towards pB and pB towards pA
+                pA.x += nx * force * 0.5;
+                pA.y += ny * force * 0.5;
+                pA.velocityY += ny * force * 0.15;
+
+                pB.x -= nx * force * 0.5;
+                pB.y -= ny * force * 0.5;
+                pB.velocityY -= ny * force * 0.15;
+
+                // Clamp Y bounds so players never clip through ground or ceiling
+                pA.y = Math.max(0, Math.min(GROUND_Y - BIRD_HEIGHT, pA.y));
+                pB.y = Math.max(0, Math.min(GROUND_Y - BIRD_HEIGHT, pB.y));
+            }
+        }
+    }
+
     updatePlayerProgress(player) {
         let allPipes = [];
         for (let mapData of this.lobby.maps) {
@@ -241,19 +375,22 @@ class GameEngine {
 
         for (let [chkId, chk] of this.lobby.checkpoints.entries()) {
             if (player.x >= chk.respawn_coordinate_x - 50 && chkId !== this.lobby.startCheckpointId) {
+                if (this.lobby.finishLineX > 0 && chk.respawn_coordinate_x >= this.lobby.finishLineX) {
+                    continue;
+                }
                 player.checkpoint_id = chkId;
             }
         }
     }
 
     checkCollisions(player) {
-        if (player.y + BIRD_HEIGHT >= GROUND_Y) {
-            return true;
+        // Knocked down or Invincible players do not collide
+        if (player.isKnockedDown || player.isInvincible) {
+            return false;
         }
 
-        // Invincibility state bypasses pipe collisions completely
-        if (player.isInvincible) {
-            return false;
+        if (player.y + BIRD_HEIGHT >= GROUND_Y) {
+            return true;
         }
 
         let allPipes = [];
@@ -282,6 +419,10 @@ class GameEngine {
         // Capacity: Players can hold a maximum of 1 item at a time
         if (player.heldItem !== null) return;
 
+        // Pickup cooldown: 3 seconds after collecting a box, cannot pick up next box (anti-vertical-spam)
+        const now = Date.now();
+        if (player.itemPickupCooldownUntil && now < player.itemPickupCooldownUntil) return;
+
         const birdBox = { x: player.x, y: player.y, width: BIRD_WIDTH, height: BIRD_HEIGHT };
 
         for (let item of this.lobby.itemBoxes) {
@@ -296,11 +437,13 @@ class GameEngine {
                 const itemTypes = ["ink", "curse", "shield", "speed", "swap", "deathnote", "ice"];
                 const acquiredItem = itemTypes[Math.floor(Math.random() * itemTypes.length)];
                 player.heldItem = acquiredItem;
+                player.itemPickupCooldownUntil = now + ITEM_PICKUP_COOLDOWN_MS;
 
                 this.broadcast("item_collected", {
                     itemId: item.id,
                     playerId: player.player_id,
-                    acquiredItem: acquiredItem
+                    acquiredItem: acquiredItem,
+                    pickupCooldownUntil: player.itemPickupCooldownUntil
                 });
 
                 // Exactly 3 seconds (3000ms) after being collected, the box must reactivate
@@ -325,6 +468,31 @@ class GameEngine {
                a.y + a.height > b.y;
     }
 
+    triggerKnockdown(player) {
+        if (player.isKnockedDown || player.isInvincible || player.is_finished) return;
+
+        player.isKnockedDown = true;
+        player.knockdownUntil = Date.now() + 5000;
+        player.isReadyToFly = false;
+        player.y = GROUND_Y - BIRD_HEIGHT; // 592
+        player.velocityY = 0;
+
+        if (player.isFrozenInIce) {
+            player.isFrozenInIce = false;
+            if (player.iceTimer) {
+                clearTimeout(player.iceTimer);
+                player.iceTimer = null;
+            }
+        }
+
+        this.broadcast("player_knocked_down", {
+            playerId: player.player_id,
+            knockdownDurationMs: 5000,
+            x: player.x,
+            y: player.y
+        });
+    }
+
     respawnPlayer(player) {
         const chkId = player.checkpoint_id || this.lobby.startCheckpointId;
         this.respawnPlayerAtCheckpoint(player, chkId);
@@ -342,6 +510,9 @@ class GameEngine {
             player.y = 320;
         }
         player.velocityY = 0;
+        player.isKnockedDown = false;
+        player.isReadyToFly = false;
+        player.knockdownUntil = null;
 
         this.broadcast("player_respawned", {
             playerId: player.player_id,
@@ -369,8 +540,14 @@ class GameEngine {
                 checkpoint_id: p.checkpoint_id,
                 chain_index: p.chain_index,
                 heldItem: p.heldItem,
+                itemPickupCooldownUntil: p.itemPickupCooldownUntil || null,
+                dashCooldownUntil: p.dashCooldownUntil || null,
                 hasShield: p.hasShield,
                 isInvincible: p.isInvincible,
+                invincibleUntil: p.invincibleUntil || null,
+                isKnockedDown: p.isKnockedDown || false,
+                knockdownUntil: p.knockdownUntil || null,
+                isReadyToFly: p.isReadyToFly || false,
                 isBucketHead: p.isBucketHead || false,
                 isFrozenInIce: p.isFrozenInIce || false,
                 speedMultiplier: p.speedMultiplier

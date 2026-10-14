@@ -22,8 +22,14 @@ class Player {
 
         // Inventory & Power-Up System State
         this.heldItem = null;       // "ink" | "curse" | "shield" | "speed" | "swap" | "deathnote" | "ice"
+        this.itemPickupCooldownUntil = null; // Timestamp ms when 3s pickup cooldown expires
+        this.dashCooldownUntil = null; // Timestamp ms when dash cooldown expires
         this.hasShield = false;     // Buff: active barrier
-        this.isInvincible = false;  // Buff: 3s pipe immunity post-shield block
+        this.isInvincible = false;  // Buff: 3s pipe immunity post-shield block, or 4s recovery shield
+        this.invincibleUntil = null; // Timestamp ms for invincibility expiration
+        this.isKnockedDown = false; // State: down on ground
+        this.knockdownUntil = null; // Timestamp ms when 5s knockdown expires
+        this.isReadyToFly = false;  // Prompt: ready for player to flap
         this.isBucketHead = false;  // Visual debuff: bucket icon over bird head
         this.isFrozenInIce = false; // Debuff: 2.5s ice freeze mid-air
         this.speedMultiplier = 1.0; // Debuff: 0.65 when cursed, 1.50 speed boost, 1.0 normal
@@ -49,8 +55,14 @@ class Player {
         this.wipes_caused = 0;
 
         this.heldItem = null;
+        this.itemPickupCooldownUntil = null;
+        this.dashCooldownUntil = null;
         this.hasShield = false;
         this.isInvincible = false;
+        this.invincibleUntil = null;
+        this.isKnockedDown = false;
+        this.knockdownUntil = null;
+        this.isReadyToFly = false;
         this.isBucketHead = false;
         this.isFrozenInIce = false;
         this.speedMultiplier = 1.0;
@@ -88,8 +100,14 @@ class Player {
             chain_index: this.chain_index,
             wipes_caused: this.wipes_caused,
             heldItem: this.heldItem,
+            itemPickupCooldownUntil: this.itemPickupCooldownUntil,
+            dashCooldownUntil: this.dashCooldownUntil,
             hasShield: this.hasShield,
             isInvincible: this.isInvincible,
+            invincibleUntil: this.invincibleUntil,
+            isKnockedDown: this.isKnockedDown,
+            knockdownUntil: this.knockdownUntil,
+            isReadyToFly: this.isReadyToFly,
             isBucketHead: this.isBucketHead,
             isFrozenInIce: this.isFrozenInIce,
             speedMultiplier: this.speedMultiplier

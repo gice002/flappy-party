@@ -41,6 +41,13 @@ const INVINCIBLE_DURATION_MS = 3000; // 3 seconds
 const SPEED_BOOST_DURATION_MS = 4000;// 4 seconds
 const ICE_DURATION_MS = 2500;        // 2.5 seconds
 const ITEM_RESPAWN_MS = 3000;        // 3 seconds
+const ITEM_PICKUP_COOLDOWN_MS = 3000; // 3 seconds cooldown between picking up item boxes
+
+// Chained Mode & Dash Constants
+const DASH_COOLDOWN_MS = 3500;       // 3.5 seconds dash cooldown
+const DASH_BURST_X = 65;             // Forward burst distance in pixels
+const MAX_TETHER_DIST = 110;         // Maximum tether extension before tension kicks in
+const TETHER_SPRING_FORCE = 0.18;    // Restorative tension spring multiplier
 
 module.exports = {
     TICK_RATE,
@@ -68,5 +75,10 @@ module.exports = {
     INVINCIBLE_DURATION_MS,
     SPEED_BOOST_DURATION_MS,
     ICE_DURATION_MS,
-    ITEM_RESPAWN_MS
+    ITEM_RESPAWN_MS,
+    ITEM_PICKUP_COOLDOWN_MS,
+    DASH_COOLDOWN_MS,
+    DASH_BURST_X,
+    MAX_TETHER_DIST,
+    TETHER_SPRING_FORCE
 };
