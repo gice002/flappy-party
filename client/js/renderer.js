@@ -26,6 +26,7 @@ class CanvasRenderer {
         this.itemBoxes = [];
         this.finishLineX = 0;
         this.modeId = "flappy_race";
+        this.bossState = null;
 
         this.cameraX = 0;
         this.targetFps = 60;
@@ -1123,7 +1124,12 @@ class CanvasRenderer {
         const birdScreenX = isWidescreen 
             ? Math.min(260, Math.max(90, Math.round(this.width * 0.22))) 
             : Math.max(50, Math.round(this.width * 0.20));
-        this.cameraX = localBird.x - birdScreenX;
+
+        if (this.modeId === "flappy_boss" && (!this.bossState || this.bossState.status !== "victory_run")) {
+            this.cameraX = 0;
+        } else {
+            this.cameraX = localBird.x - birdScreenX;
+        }
 
         // Apply Screen Shake if active (plus subtle tremor during hit-pause)
         this.applyScreenShake(isHitPaused);
@@ -1134,11 +1140,13 @@ class CanvasRenderer {
         // 2. Render Checkpoints & Finish Line
         this.renderCheckpointsAndFinish();
 
-        // 3. Render Pipes
-        this.renderPipes();
-
-        // 4. Render Item Boxes
-        this.renderItemBoxes();
+        // 3. Render Pipes / Boss Arena
+        if (this.modeId === "flappy_boss") {
+            this.renderBossArena();
+        } else {
+            this.renderPipes();
+            this.renderItemBoxes();
+        }
 
         // 5. Render Birds & Chain (with ghost afterimages)
         this.renderChains();
@@ -1293,6 +1301,9 @@ class CanvasRenderer {
     }
 
     getCurrentMapTheme() {
+        if (this.modeId === "flappy_boss") {
+            return (this.bossState && this.bossState.themeId) ? this.bossState.themeId : "volcano";
+        }
         const localX = this.physics.predictedState.x;
         for (let mapData of this.maps) {
             if (mapData.pipes && mapData.pipes.length > 0) {
@@ -1494,6 +1505,372 @@ class CanvasRenderer {
                 this.ctx.textAlign = "center";
                 this.ctx.fillText("?", screenX + 16, itemY + 23);
             }
+
+            this.ctx.restore();
+        }
+    }
+
+    renderBossArena() {
+        if (!this.bossState) return;
+
+        // 1. Render Beams (Warning Telegraph & Laser)
+        this.renderBossBeams();
+
+        // 2. Render Projectiles (Fireballs, Ice Shards, Void Spheres)
+        this.renderBossProjectiles();
+
+        // 3. Render Energy Orbs (Collectible ammunition)
+        this.renderEnergyOrbs();
+
+        // 4. Render Boss Entity (Sprite, Floating, Glowing, Wings/Aura, HP Bar)
+        if (this.bossState.status !== "victory_run" && this.bossState.status !== "completed") {
+            this.renderBoss();
+        }
+    }
+
+    renderBoss() {
+        const b = this.bossState;
+        if (!b) return;
+
+        const bx = b.x - this.cameraX;
+        const by = b.y;
+        const bw = b.width || 72;
+        const bh = b.height || 110;
+        const now = performance.now();
+
+        this.ctx.save();
+
+        // 1. Hit Flash or Elemental Aura
+        if (b.hitFlash) {
+            this.ctx.fillStyle = "#ffffff";
+            this.ctx.shadowColor = "#ffffff";
+            this.ctx.shadowBlur = 25;
+        } else {
+            this.ctx.shadowColor = b.accentColor || "#ffa502";
+            this.ctx.shadowBlur = 16 + Math.sin(now / 180) * 8;
+        }
+
+        // 2. Boss 1 / 2 / 3 Distinct Visual Designs
+        if (b.bossIndex === 1) {
+            // === IGNIS THE FIRE WYRM ===
+            // Glowing flame wings behind body
+            const wingFlap = Math.sin(now / 140) * 12;
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#c0392b";
+            this.ctx.beginPath();
+            this.ctx.moveTo(bx + bw * 0.4, by + bh * 0.3);
+            this.ctx.lineTo(bx + bw + 32, by - 10 + wingFlap);
+            this.ctx.lineTo(bx + bw * 0.8, by + bh * 0.6);
+            this.ctx.closePath();
+            this.ctx.fill();
+
+            // Dragon Torso & Neck
+            const bodyGrad = this.ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+            bodyGrad.addColorStop(0, b.hitFlash ? "#ffffff" : "#ff4757");
+            bodyGrad.addColorStop(1, b.hitFlash ? "#ffffff" : "#c0392b");
+            this.ctx.fillStyle = bodyGrad;
+            this.ctx.beginPath();
+            this.ctx.roundRect ? this.ctx.roundRect(bx, by, bw, bh, 14) : this.ctx.fillRect(bx, by, bw, bh);
+            this.ctx.fill();
+            this.ctx.strokeStyle = "#1e1e2f";
+            this.ctx.lineWidth = 3;
+            this.ctx.stroke();
+
+            // Magma Molten Core in chest
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#ffa502";
+            this.ctx.beginPath();
+            this.ctx.arc(bx + bw * 0.45, by + bh * 0.55, 14, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Fierce Dragon Head & Horns
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#eb4d4b";
+            this.ctx.beginPath();
+            this.ctx.moveTo(bx, by + 10);
+            this.ctx.lineTo(bx - 22, by + 28);
+            this.ctx.lineTo(bx, by + 45);
+            this.ctx.closePath();
+            this.ctx.fill();
+            this.ctx.stroke();
+
+            // Glowing Dragon Eye
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#f1c40f";
+            this.ctx.beginPath();
+            this.ctx.arc(bx - 6, by + 24, 4, 0, Math.PI * 2);
+            this.ctx.fill();
+
+        } else if (b.bossIndex === 2) {
+            // === GLACIUS THE FROST TITAN ===
+            // Crystalline Shoulder Spikes
+            const frostPulse = Math.sin(now / 200) * 4;
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#54a0ff";
+            this.ctx.beginPath();
+            this.ctx.moveTo(bx + 10, by);
+            this.ctx.lineTo(bx + 20, by - 24 + frostPulse);
+            this.ctx.lineTo(bx + 35, by);
+            this.ctx.lineTo(bx + bw - 10, by);
+            this.ctx.lineTo(bx + bw + 10, by - 20 - frostPulse);
+            this.ctx.lineTo(bx + bw, by + 20);
+            this.ctx.closePath();
+            this.ctx.fill();
+
+            // Ice Golem Armored Torso
+            const iceGrad = this.ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+            iceGrad.addColorStop(0, b.hitFlash ? "#ffffff" : "#00d2d3");
+            iceGrad.addColorStop(1, b.hitFlash ? "#ffffff" : "#2e86de");
+            this.ctx.fillStyle = iceGrad;
+            this.ctx.beginPath();
+            this.ctx.roundRect ? this.ctx.roundRect(bx, by, bw, bh, 8) : this.ctx.fillRect(bx, by, bw, bh);
+            this.ctx.fill();
+            this.ctx.strokeStyle = "#10ac84";
+            this.ctx.lineWidth = 3;
+            this.ctx.stroke();
+
+            // Frost Core Rune
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#c8d6e5";
+            this.ctx.beginPath();
+            this.ctx.moveTo(bx + bw * 0.5, by + bh * 0.4);
+            this.ctx.lineTo(bx + bw * 0.5 + 12, by + bh * 0.55);
+            this.ctx.lineTo(bx + bw * 0.5, by + bh * 0.7);
+            this.ctx.lineTo(bx + bw * 0.5 - 12, by + bh * 0.55);
+            this.ctx.closePath();
+            this.ctx.fill();
+
+            // Glowing Cyan Visor
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#00ffff";
+            this.ctx.fillRect(bx - 12, by + 26, 26, 7);
+
+        } else {
+            // === MALAKOR THE VOID OVERLORD ===
+            // Swirling Void Tendrils
+            this.ctx.strokeStyle = b.hitFlash ? "#ffffff" : "#8e44ad";
+            this.ctx.lineWidth = 4;
+            for (let i = 0; i < 4; i++) {
+                const tendrilWave = Math.sin((now / 160) + i * 1.5) * 16;
+                this.ctx.beginPath();
+                this.ctx.moveTo(bx + bw * 0.8, by + 20 + i * 22);
+                this.ctx.quadraticCurveTo(bx + bw + 24, by + 20 + i * 22 + tendrilWave, bx + bw + 42, by + 20 + i * 22);
+                this.ctx.stroke();
+            }
+
+            // Dark Matter Body
+            const voidGrad = this.ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+            voidGrad.addColorStop(0, b.hitFlash ? "#ffffff" : "#2c2c54");
+            voidGrad.addColorStop(1, b.hitFlash ? "#ffffff" : "#130f40");
+            this.ctx.fillStyle = voidGrad;
+            this.ctx.beginPath();
+            this.ctx.roundRect ? this.ctx.roundRect(bx, by, bw, bh, 20) : this.ctx.fillRect(bx, by, bw, bh);
+            this.ctx.fill();
+            this.ctx.strokeStyle = "#e056fd";
+            this.ctx.lineWidth = 3;
+            this.ctx.stroke();
+
+            // Pulsing Void Ring
+            this.ctx.strokeStyle = b.hitFlash ? "#ffffff" : "#be2edd";
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.arc(bx + bw * 0.5, by + bh * 0.55, 18 + Math.sin(now / 150) * 4, 0, Math.PI * 2);
+            this.ctx.stroke();
+
+            // Demonic Crimson Eye
+            this.ctx.fillStyle = b.hitFlash ? "#ffffff" : "#ff3838";
+            this.ctx.beginPath();
+            this.ctx.arc(bx - 4, by + 32, 6, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
+        // 3. Overhead Health Bar
+        const barW = 120;
+        const barH = 10;
+        const barX = bx + (bw - barW) / 2;
+        const barY = by - 24;
+
+        this.ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+        this.ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+        this.ctx.strokeStyle = "#ffffff";
+        this.ctx.lineWidth = 1.5;
+        this.ctx.strokeRect(barX - 2, barY - 2, barW + 4, barH + 4);
+
+        const hpPct = Math.max(0, Math.min(1.0, b.hp / (b.maxHp || 100)));
+        this.ctx.fillStyle = hpPct > 0.5 ? "#2ecc71" : (hpPct > 0.25 ? "#f1c40f" : "#e74c3c");
+        this.ctx.fillRect(barX, barY, barW * hpPct, barH);
+
+        // Overhead Boss Name & HP Text
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.strokeStyle = "#000000";
+        this.ctx.lineWidth = 2.5;
+        this.ctx.font = "bold 6.5px 'Press Start 2P', monospace";
+        this.ctx.textAlign = "center";
+        this.ctx.strokeText(`BOSS ${b.bossIndex}/3`, barX + barW / 2, barY - 5);
+        this.ctx.fillText(`BOSS ${b.bossIndex}/3`, barX + barW / 2, barY - 5);
+
+        this.ctx.font = "6px 'Press Start 2P', monospace";
+        this.ctx.fillStyle = "#f7d51d";
+        this.ctx.fillText(`${b.hp}/${b.maxHp}`, barX + barW / 2, barY + barH - 2);
+
+        this.ctx.restore();
+    }
+
+    renderBossBeams() {
+        if (!this.bossState || !this.bossState.beams) return;
+        const now = performance.now();
+
+        for (let b of this.bossState.beams) {
+            this.ctx.save();
+            const beamY = b.y - b.height / 2;
+
+            if (b.isWarning) {
+                // Hazard warning telegraph line
+                const alpha = 0.25 + Math.sin(now / 80) * 0.18;
+                this.ctx.fillStyle = `rgba(231, 76, 60, ${alpha})`;
+                this.ctx.fillRect(0, beamY, this.width, b.height);
+
+                this.ctx.strokeStyle = "#e74c3c";
+                this.ctx.lineWidth = 1.5;
+                this.ctx.setLineDash([8, 6]);
+                this.ctx.strokeRect(0, beamY, this.width, b.height);
+
+                this.ctx.fillStyle = "#ff4757";
+                this.ctx.font = "bold 8px 'Press Start 2P', monospace";
+                this.ctx.textAlign = "center";
+                this.ctx.fillText("⚠️ HAZARD WARNING ⚠️", this.width / 2, b.y + 3);
+            } else if (b.isFiring) {
+                // Intense Energy Laser
+                const beamColor = this.bossState.bossIndex === 2 ? "#00ffff" : "#e056fd";
+                this.ctx.shadowColor = beamColor;
+                this.ctx.shadowBlur = 18;
+
+                // Outer beam glow
+                this.ctx.fillStyle = beamColor;
+                this.ctx.fillRect(0, beamY, this.width, b.height);
+
+                // White core laser
+                this.ctx.fillStyle = "#ffffff";
+                this.ctx.fillRect(0, b.y - b.height * 0.25, this.width, b.height * 0.5);
+            }
+
+            this.ctx.restore();
+        }
+    }
+
+    renderBossProjectiles() {
+        if (!this.bossState || !this.bossState.projectiles) return;
+        const now = performance.now();
+
+        for (let p of this.bossState.projectiles) {
+            const px = p.x - this.cameraX;
+            const py = p.y;
+            this.ctx.save();
+
+            if (p.type === "fireball" || p.type === "magma") {
+                this.ctx.shadowColor = p.color || "#ff4757";
+                this.ctx.shadowBlur = 14;
+
+                // Fireball gradient
+                const grad = this.ctx.createRadialGradient(px, py, 2, px, py, p.radius);
+                grad.addColorStop(0, "#ffffff");
+                grad.addColorStop(0.4, "#ffa502");
+                grad.addColorStop(1, p.color || "#ff4757");
+                this.ctx.fillStyle = grad;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Trailing flame flame sparks
+                this.ctx.fillStyle = "#ff6348";
+                this.ctx.beginPath();
+                this.ctx.arc(px + p.radius + 6, py + (Math.sin(now / 50) * 3), p.radius * 0.45, 0, Math.PI * 2);
+                this.ctx.fill();
+
+            } else if (p.type === "ice_shard") {
+                this.ctx.shadowColor = "#00d2d3";
+                this.ctx.shadowBlur = 12;
+                this.ctx.fillStyle = "#00d2d3";
+                this.ctx.strokeStyle = "#ffffff";
+                this.ctx.lineWidth = 1.5;
+
+                // Sharp diamond shard pointing left
+                this.ctx.beginPath();
+                this.ctx.moveTo(px - p.radius * 1.5, py);
+                this.ctx.lineTo(px, py - p.radius * 0.6);
+                this.ctx.lineTo(px + p.radius * 1.2, py);
+                this.ctx.lineTo(px, py + p.radius * 0.6);
+                this.ctx.closePath();
+                this.ctx.fill();
+                this.ctx.stroke();
+
+            } else if (p.type === "ice_mine") {
+                this.ctx.shadowColor = "#54a0ff";
+                this.ctx.shadowBlur = 12;
+                this.ctx.fillStyle = "#54a0ff";
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.strokeStyle = "#ffffff";
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+
+            } else {
+                // Void Orb / Vortex
+                this.ctx.shadowColor = p.color || "#9b59b6";
+                this.ctx.shadowBlur = 16;
+
+                const vGrad = this.ctx.createRadialGradient(px, py, 3, px, py, p.radius);
+                vGrad.addColorStop(0, "#ffffff");
+                vGrad.addColorStop(0.5, "#8e44ad");
+                vGrad.addColorStop(1, "#2c2c54");
+                this.ctx.fillStyle = vGrad;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Outer shockwave ring
+                this.ctx.strokeStyle = "#e056fd";
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.arc(px, py, p.radius + 3, 0, Math.PI * 2);
+                this.ctx.stroke();
+            }
+
+            this.ctx.restore();
+        }
+    }
+
+    renderEnergyOrbs() {
+        if (!this.bossState || !this.bossState.energyOrbs) return;
+        const now = performance.now();
+
+        for (let orb of this.bossState.energyOrbs) {
+            const ox = orb.x - this.cameraX;
+            const oy = orb.y;
+
+            this.ctx.save();
+            this.ctx.shadowColor = "#f1c40f";
+            this.ctx.shadowBlur = 16 + Math.sin(now / 140) * 6;
+
+            // Radiant Golden Core
+            const oGrad = this.ctx.createRadialGradient(ox, oy, 2, ox, oy, orb.radius);
+            oGrad.addColorStop(0, "#ffffff");
+            oGrad.addColorStop(0.4, "#f7d51d");
+            oGrad.addColorStop(1, "#f39c12");
+            this.ctx.fillStyle = oGrad;
+            this.ctx.beginPath();
+            this.ctx.arc(ox, oy, orb.radius, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Pulsating energy ring
+            this.ctx.strokeStyle = "#ffffff";
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(ox, oy, orb.radius + 3 + Math.sin(now / 120) * 3, 0, Math.PI * 2);
+            this.ctx.stroke();
+
+            // Label above orb
+            this.ctx.fillStyle = "#ffffff";
+            this.ctx.strokeStyle = "#000000";
+            this.ctx.lineWidth = 2;
+            this.ctx.font = "bold 6px 'Press Start 2P', monospace";
+            this.ctx.textAlign = "center";
+            this.ctx.strokeText("⚡ ORB", ox, oy - orb.radius - 4);
+            this.ctx.fillText("⚡ ORB", ox, oy - orb.radius - 4);
 
             this.ctx.restore();
         }
@@ -1740,7 +2117,8 @@ class CanvasRenderer {
                 remote.isFrozenInIce,
                 remote.isKnockedDown,
                 remote.isReadyToFly,
-                remote.knockdownUntil
+                remote.knockdownUntil,
+                remote.isDeadInBoss || false
             );
         }
 
@@ -1762,7 +2140,8 @@ class CanvasRenderer {
             this.physics.localIsFrozenInIce,
             this.physics.localIsKnockedDown,
             this.physics.localIsReadyToFly,
-            this.physics.localKnockdownUntil
+            this.physics.localKnockdownUntil,
+            this.physics.localIsDeadInBoss || false
         );
     }
 
@@ -1874,7 +2253,10 @@ class CanvasRenderer {
         this.ctx.restore();
     }
 
-    drawSingleBird(x, y, velocityY, skinId, hatId, name, isLocal, hasShield = false, speedMultiplier = 1.0, isInvincible = false, isBucketHead = false, isFrozenInIce = false, isKnockedDown = false, isReadyToFly = false, knockdownUntil = null) {
+    drawSingleBird(x, y, velocityY, skinId, hatId, name, isLocal, hasShield = false, speedMultiplier = 1.0, isInvincible = false, isBucketHead = false, isFrozenInIce = false, isKnockedDown = false, isReadyToFly = false, knockdownUntil = null, isDeadInBoss = false) {
+        if (isDeadInBoss) {
+            isKnockedDown = true;
+        }
         this.ctx.save();
 
         // If Bucket Head active (Ink hit), render bucket.png above bird head (visible to all players)
@@ -2056,32 +2438,51 @@ class CanvasRenderer {
         this.drawHat(hatId);
         this.ctx.restore();
 
-        // If Knocked Down: render 3D Orbiting Dizzy Stars circling bird's head and status badge
+        // If Knocked Down or Dead in Boss: render 3D Orbiting Dizzy Stars or DEAD badge
         if (isKnockedDown) {
-            // Render 3D tilted orbiting dizzy stars circling around bird's head throughout knockdown
-            this.renderOrbitingDizzyStars(headX, headY);
-
-            if (!isReadyToFly) {
-                // Countdown badge while knocked down
+            if (isDeadInBoss) {
+                // Render Dead badge while awaiting boss defeat / team wipe
                 this.ctx.save();
-                const now = Date.now();
-                const remainingSec = Math.max(0, Math.ceil(((knockdownUntil || (now + 5000)) - now) / 1000));
-                this.ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-                this.ctx.strokeStyle = "#e74c3c";
+                this.ctx.fillStyle = "rgba(0, 0, 0, 0.88)";
+                this.ctx.strokeStyle = "#ff4757";
                 this.ctx.lineWidth = 2;
-                const badgeW = 92;
+                const badgeW = 96;
                 const badgeH = 18;
                 const badgeY = Math.min(headY - 26, y - 26);
                 this.ctx.fillRect(x + 17 - badgeW / 2, badgeY, badgeW, badgeH);
                 this.ctx.strokeRect(x + 17 - badgeW / 2, badgeY, badgeW, badgeH);
 
-                this.ctx.fillStyle = "#ffffff";
+                this.ctx.fillStyle = "#ff4757";
                 this.ctx.font = "bold 8px 'Press Start 2P', monospace";
                 this.ctx.textAlign = "center";
                 this.ctx.textBaseline = "middle";
-                this.ctx.fillText(`DOWN ${remainingSec}s`, x + 17, badgeY + 10);
+                this.ctx.fillText("💀 DEAD", x + 17, badgeY + 10);
                 this.ctx.restore();
             } else {
+                // Render 3D tilted orbiting dizzy stars circling around bird's head throughout knockdown
+                this.renderOrbitingDizzyStars(headX, headY);
+
+                if (!isReadyToFly) {
+                    // Countdown badge while knocked down
+                    this.ctx.save();
+                    const now = Date.now();
+                    const remainingSec = Math.max(0, Math.ceil(((knockdownUntil || (now + 5000)) - now) / 1000));
+                    this.ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+                    this.ctx.strokeStyle = "#e74c3c";
+                    this.ctx.lineWidth = 2;
+                    const badgeW = 92;
+                    const badgeH = 18;
+                    const badgeY = Math.min(headY - 26, y - 26);
+                    this.ctx.fillRect(x + 17 - badgeW / 2, badgeY, badgeW, badgeH);
+                    this.ctx.strokeRect(x + 17 - badgeW / 2, badgeY, badgeW, badgeH);
+
+                    this.ctx.fillStyle = "#ffffff";
+                    this.ctx.font = "bold 8px 'Press Start 2P', monospace";
+                    this.ctx.textAlign = "center";
+                    this.ctx.textBaseline = "middle";
+                    this.ctx.fillText(`DOWN ${remainingSec}s`, x + 17, badgeY + 10);
+                    this.ctx.restore();
+                } else {
                 // 5s passed! Ready to fly pulsing indicator
                 this.ctx.save();
                 const bounce = Math.sin(Date.now() / 120) * 3;
@@ -2112,6 +2513,7 @@ class CanvasRenderer {
                 this.ctx.restore();
             }
         }
+    }
 
         // Render Player Name Tag & Arrow Indicator
         this.ctx.save();

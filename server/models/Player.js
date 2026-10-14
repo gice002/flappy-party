@@ -33,6 +33,8 @@ class Player {
         this.isBucketHead = false;  // Visual debuff: bucket icon over bird head
         this.isFrozenInIce = false; // Debuff: 2.5s ice freeze mid-air
         this.speedMultiplier = 1.0; // Debuff: 0.65 when cursed, 1.50 speed boost, 1.0 normal
+        this.bossLives = 2;         // Boss Mode: 2 lives per boss
+        this.isDeadInBoss = false;  // Boss Mode: True when lost both lives (waits for team to defeat boss)
         this.curseTimer = null;
         this.shieldTimer = null;
         this.invincibleTimer = null;
@@ -66,6 +68,8 @@ class Player {
         this.isBucketHead = false;
         this.isFrozenInIce = false;
         this.speedMultiplier = 1.0;
+        this.bossLives = 2;
+        this.isDeadInBoss = false;
         if (this.curseTimer) clearTimeout(this.curseTimer);
         this.curseTimer = null;
         if (this.shieldTimer) clearTimeout(this.shieldTimer);
@@ -110,7 +114,9 @@ class Player {
             isReadyToFly: this.isReadyToFly,
             isBucketHead: this.isBucketHead,
             isFrozenInIce: this.isFrozenInIce,
-            speedMultiplier: this.speedMultiplier
+            speedMultiplier: this.speedMultiplier,
+            bossLives: this.bossLives,
+            isDeadInBoss: this.isDeadInBoss
         };
     }
 }

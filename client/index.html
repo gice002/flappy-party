@@ -14,10 +14,15 @@
         <!-- SCREEN 1: MAIN MENU & LOBBY REGISTRATION (PORTRAIT REVAMP) -->
         <div id="screen-main-menu" class="screen active">
             <div class="card card-portrait main-menu-card">
-                <!-- TOP: Player Name Input (Prominently Accessible at Top) -->
-                <div class="input-group top-name-input-group">
-                    <label for="input-player-name">👤 PLAYER NAME</label>
-                    <input type="text" id="input-player-name" placeholder="Enter your name..." maxlength="12" value="FlappyHero" autocomplete="off">
+                <!-- TOP: Player Name Input & Wallet Balance Badge -->
+                <div class="top-name-wallet-container" style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 12px;">
+                    <div class="input-group top-name-input-group" style="flex: 1; margin-bottom: 0;">
+                        <label for="input-player-name">👤 PLAYER NAME</label>
+                        <input type="text" id="input-player-name" placeholder="Enter your name..." maxlength="12" value="FlappyHero" autocomplete="off">
+                    </div>
+                    <div id="main-wallet-badge" style="background: rgba(0,0,0,0.45); border: 2px solid #f7d51d; border-radius: 6px; padding: 4px 8px; min-width: 75px; height: 35px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);" title="Your Coin Wallet Balance">
+                        <span style="font-size: 13px;">💰</span> <strong id="main-wallet-coins" style="color: #f7d51d; font-size: 11px;">0</strong>
+                    </div>
                 </div>
 
                 <h1 class="game-title">FLAPPY BIRD</h1>
@@ -28,7 +33,7 @@
                         <span class="btn-icon">▶️</span> PLAY
                     </button>
                     <button class="btn btn-secondary btn-touch-action btn-menu-main" id="btn-main-customize">
-                        <span class="btn-icon">🎨</span> CUSTOMIZE
+                        <span class="btn-icon">🎩</span> SHOP & CUSTOMIZE
                     </button>
                     <button class="btn btn-secondary btn-touch-action btn-menu-main" id="btn-main-settings">
                         <span class="btn-icon">⚙️</span> SETTINGS
@@ -55,9 +60,17 @@
                     </button>
                 </div>
 
-                <!-- 3. SUB-VIEW: BIRD CUSTOMIZATION -->
+                <!-- 3. SUB-VIEW: BIRD CUSTOMIZATION & HAT SHOP -->
                 <div id="main-menu-customize-view" class="customization-section" style="display: none;">
-                    <div class="submenu-title">BIRD CUSTOMIZATION</div>
+                    <div class="submenu-title">BIRD CUSTOMIZATION & HAT SHOP</div>
+
+                    <!-- Wallet Badge inside Shop -->
+                    <div class="shop-wallet-box" style="background: rgba(0,0,0,0.5); border: 2px solid #f7d51d; border-radius: 6px; padding: 6px 12px; margin-bottom: 8px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                        <span style="font-size: 14px;">💰 WALLET:</span>
+                        <strong id="customize-wallet-coins" style="color: #f7d51d; font-size: 12px;">0</strong>
+                        <span style="font-size: 8px; color: #fff;">COINS</span>
+                    </div>
+
                     <div class="preview-box">
                         <div id="preview-bird" class="preview-bird" style="position: relative; width: 48px; height: 36px; display: flex; align-items: center; justify-content: center; background: transparent; border: none;">
                             <img id="preview-bird-img" src="assets/images/flappybird0.png" style="width: 34px; height: 24px; object-fit: contain;" alt="Bird" />
@@ -65,19 +78,29 @@
                         </div>
                     </div>
 
+                    <!-- Skin Option Selector -->
                     <div class="option-selector">
                         <button class="btn btn-touch-arrow" id="btn-prev-skin">&lt;</button>
                         <span id="skin-name-label" style="font-size: 8px;">Classic Yellow</span>
                         <button class="btn btn-touch-arrow" id="btn-next-skin">&gt;</button>
                     </div>
 
+                    <!-- Hat Option Selector with Live Price Tag -->
                     <div class="option-selector">
                         <button class="btn btn-touch-arrow" id="btn-prev-hat">&lt;</button>
-                        <span id="hat-name-label" style="font-size: 8px;">None</span>
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 130px;">
+                            <span id="hat-name-label" style="font-size: 8px;">None</span>
+                            <span id="hat-price-label" style="font-size: 7px; color: #55b02e; margin-top: 3px; font-weight: bold;">✓ FREE</span>
+                        </div>
                         <button class="btn btn-touch-arrow" id="btn-next-hat">&gt;</button>
                     </div>
 
-                    <button class="btn btn-primary btn-touch-action" id="btn-customize-done" style="margin-top: 14px;">
+                    <!-- Buy or Equip Button -->
+                    <button class="btn btn-primary btn-touch-action" id="btn-buy-equip-hat" style="margin-top: 8px; width: 100%;">
+                        ✓ EQUIPPED
+                    </button>
+
+                    <button class="btn btn-secondary btn-touch-action" id="btn-customize-done" style="margin-top: 10px;">
                         ✓ DONE
                     </button>
                 </div>
@@ -104,6 +127,7 @@
                         <select id="select-game-mode">
                             <option value="flappy_race">Flappy Race (Default)</option>
                             <option value="flappy_chained">Flappy Chained (4-Player)</option>
+                            <option value="flappy_boss">Boss Raid (3 Bosses Co-op)</option>
                         </select>
                     </div>
 
@@ -164,10 +188,21 @@
 
         <!-- SCREEN 3: GAME CANVAS & HUD (PORTRAIT FULLSCREEN) -->
         <div id="screen-game" class="screen screen-game-portrait">
-            <!-- Minimal Top Bar (Progress Bar, Ping, Exit) -->
+            <!-- Minimal Top Bar (Progress Bar, Boss HP, Ping, Exit) -->
             <div id="hud" class="hud-top-bar">
                 <div class="hud-panel" id="hud-map-progress" style="display: none;">
                     <span id="hud-pipe-count">Pipes Cleared: 0 / 10</span>
+                </div>
+
+                <!-- Boss Raid HUD Panel -->
+                <div id="hud-boss-panel" style="display: none; flex: 1; max-width: 240px; margin: 0 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                        <span id="hud-boss-name" style="font-size: 7.5px; font-weight: bold; color: #ff4757; text-shadow: 1px 1px 0 #000;">BOSS 1/3: IGNIS</span>
+                        <span id="hud-player-lives" style="font-size: 7.5px; color: #f7d51d; text-shadow: 1px 1px 0 #000;">❤️ LIVES: 2</span>
+                    </div>
+                    <div style="width: 100%; height: 8px; background: rgba(0,0,0,0.6); border: 1.5px solid #fff; border-radius: 3px; overflow: hidden; position: relative;">
+                        <div id="hud-boss-hp-fill" style="width: 100%; height: 100%; background: linear-gradient(90deg, #ff4757, #ffa502); transition: width 0.15s ease;"></div>
+                    </div>
                 </div>
 
                 <!-- Minimal Top-Right Corner Exit Button -->
@@ -182,6 +217,13 @@
                 <div id="finish-timer-banner">
                     1ST PLACE FINISHED!<br>
                     FINISH TIMER: <span id="finish-timer-seconds">10</span>s
+                </div>
+
+                <!-- 5s Boss Intermission Banner -->
+                <div id="boss-intermission-banner" style="display: none; position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.88); border: 3px solid #f7d51d; border-radius: 8px; padding: 12px 20px; text-align: center; z-index: 50; box-shadow: 0 0 16px rgba(247, 213, 29, 0.6); pointer-events: none; width: 85%; max-width: 290px; box-sizing: border-box;">
+                    <div id="boss-intermission-title" style="font-size: 12px; color: #55b02e; font-weight: bold; margin-bottom: 6px; text-shadow: 1px 1px 0 #000;">BOSS DEFEATED!</div>
+                    <div style="font-size: 7.5px; color: #fff; margin-bottom: 6px; line-height: 1.4;">ALL TEAMMATES REVIVED WITH 2 LIVES!</div>
+                    <div style="font-size: 9px; color: #f7d51d;">NEXT BOSS IN: <span id="boss-intermission-seconds">5</span>s</div>
                 </div>
 
                 <!-- 3-2-1 Start Countdown -->
@@ -219,6 +261,14 @@
             <div class="card card-portrait">
                 <h1 class="game-title" id="results-main-header">MATCH RESULTS</h1>
                 <h2 id="results-sub-header" style="color: #f7d51d; font-size: 11px; margin-bottom: 8px; display: none;"></h2>
+
+                <!-- Economy Reward Notification Banner -->
+                <div id="results-reward-banner" style="display: none; background: rgba(85, 176, 46, 0.22); border: 2px solid #55b02e; border-radius: 6px; padding: 6px 12px; margin-bottom: 10px; text-align: center; box-shadow: 0 0 8px rgba(85, 176, 46, 0.4);">
+                    <span style="font-size: 11px; color: #fff;">🎉 REWARD:</span>
+                    <strong id="results-coins-earned" style="color: #f7d51d; font-size: 12px; margin-left: 4px;">+0</strong>
+                    <span style="font-size: 8px; color: #fff; margin-left: 2px;">COINS!</span>
+                    <div id="results-new-balance" style="font-size: 8px; color: #a9dfbf; margin-top: 2px;">Wallet: 0 Coins</div>
+                </div>
 
                 <table class="leaderboard-table" id="leaderboard-table-el">
                     <thead id="leaderboard-head">

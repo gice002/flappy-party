@@ -302,8 +302,9 @@ class LobbyManager {
             return this.sendTo(socket, "error_message", { message: "Only the Host can start the match." });
         }
 
-        if (lobby.players.size < 2) {
-            return this.sendTo(socket, "error_message", { message: "Minimum 2 players required to start match." });
+        const minPlayers = (lobby.mode_id === "flappy_boss") ? 1 : 2;
+        if (lobby.players.size < minPlayers) {
+            return this.sendTo(socket, "error_message", { message: `Minimum ${minPlayers} player(s) required to start match.` });
         }
 
         if (!lobby.allPlayersReady()) {

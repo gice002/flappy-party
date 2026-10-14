@@ -256,9 +256,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const mainMenuPlaySubactions = document.getElementById("main-menu-play-subactions");
     const mainMenuCustomizeView = document.getElementById("main-menu-customize-view");
 
-    // Customization Elements
+    // Customization & Shop Elements
     const skinNameLabel = document.getElementById("skin-name-label");
     const hatNameLabel = document.getElementById("hat-name-label");
+    const hatPriceLabel = document.getElementById("hat-price-label");
+    const btnBuyEquipHat = document.getElementById("btn-buy-equip-hat");
+    const mainWalletCoins = document.getElementById("main-wallet-coins");
+    const customizeWalletCoins = document.getElementById("customize-wallet-coins");
+    const resultsRewardBanner = document.getElementById("results-reward-banner");
+    const resultsCoinsEarned = document.getElementById("results-coins-earned");
+    const resultsNewBalance = document.getElementById("results-new-balance");
     const btnPrevSkin = document.getElementById("btn-prev-skin");
     const btnNextSkin = document.getElementById("btn-next-skin");
     const btnPrevHat = document.getElementById("btn-prev-hat");
@@ -286,6 +293,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const finishTimerBanner = document.getElementById("finish-timer-banner");
     const finishTimerSecondsEl = document.getElementById("finish-timer-seconds");
     const startCountdownEl = document.getElementById("start-countdown");
+
+    // Boss Raid HUD Elements
+    const hudBossPanel = document.getElementById("hud-boss-panel");
+    const hudBossName = document.getElementById("hud-boss-name");
+    const hudPlayerLives = document.getElementById("hud-player-lives");
+    const hudBossHpFill = document.getElementById("hud-boss-hp-fill");
+    const bossIntermissionBanner = document.getElementById("boss-intermission-banner");
+    const bossIntermissionTitle = document.getElementById("boss-intermission-title");
+    const bossIntermissionSeconds = document.getElementById("boss-intermission-seconds");
 
     // Inventory & Action UI Elements
     const hudInventory = document.getElementById("hud-inventory");
@@ -449,10 +465,78 @@ document.addEventListener("DOMContentLoaded", () => {
         "assets/images/hats/hat_viking.png"
     ];
 
-    // Update customization preview
+    // Hat Shop Catalog
+    const hatCatalog = [
+        { hat_id: 0, name: "None", price: 0, isFree: true },
+        { hat_id: 1, name: "Golden Crown", price: 100, isFree: false },
+        { hat_id: 2, name: "Top Hat", price: 50, isFree: false },
+        { hat_id: 3, name: "Red Cap", price: 0, isFree: true },
+        { hat_id: 4, name: "Viking Helmet", price: 75, isFree: false }
+    ];
+
+    window.userCoins = 0;
+    window.unlockedHats = [0, 3]; // Default free starter hats
+    window.previewHatId = window.playerHatId || 0;
+
+    function updateWalletUI(coins) {
+        window.userCoins = typeof coins === "number" ? coins : (parseInt(coins, 10) || 0);
+        if (mainWalletCoins) mainWalletCoins.textContent = window.userCoins;
+        if (customizeWalletCoins) customizeWalletCoins.textContent = window.userCoins;
+    }
+
+    async function fetchUserWallet(playerName) {
+        const cleanName = (playerName || window.playerName || (nameInput && nameInput.value) || "FlappyHero").trim();
+        try {
+            const res = await fetch(`/api/player/wallet?name=${encodeURIComponent(cleanName)}`);
+            const data = await res.json();
+            if (data && data.success) {
+                updateWalletUI(data.balance);
+                window.unlockedHats = Array.isArray(data.unlocked_hats) ? data.unlocked_hats : [0, 3];
+                updateCustomizationUI();
+            }
+        } catch (err) {
+            console.warn("[Wallet] Failed to fetch wallet:", err.message);
+        }
+    }
+
+    // Update customization preview & Shop status
     function updateCustomizationUI() {
-        skinNameLabel.textContent = skins[window.playerSkinId];
-        hatNameLabel.textContent = hats[window.playerHatId];
+        if (skinNameLabel) skinNameLabel.textContent = skins[window.playerSkinId];
+
+        const currentHat = hatCatalog[window.previewHatId] || hatCatalog[0];
+        if (hatNameLabel) hatNameLabel.textContent = currentHat.name;
+
+        const isOwned = window.unlockedHats.includes(window.previewHatId);
+        const isEquipped = (window.playerHatId === window.previewHatId);
+
+        if (hatPriceLabel) {
+            if (isOwned) {
+                hatPriceLabel.textContent = currentHat.isFree ? "✓ FREE" : "✓ OWNED";
+                hatPriceLabel.style.color = "#55b02e";
+            } else {
+                hatPriceLabel.textContent = `🔒 ${currentHat.price} COINS`;
+                hatPriceLabel.style.color = "#e74c3c";
+            }
+        }
+
+        if (btnBuyEquipHat) {
+            btnBuyEquipHat.style.display = "block";
+            if (isOwned) {
+                if (isEquipped) {
+                    btnBuyEquipHat.textContent = "✓ EQUIPPED";
+                    btnBuyEquipHat.className = "btn btn-secondary btn-touch-action";
+                    btnBuyEquipHat.disabled = true;
+                } else {
+                    btnBuyEquipHat.textContent = "EQUIP HAT";
+                    btnBuyEquipHat.className = "btn btn-primary btn-touch-action";
+                    btnBuyEquipHat.disabled = false;
+                }
+            } else {
+                btnBuyEquipHat.textContent = `🛒 BUY (${currentHat.price} 💰)`;
+                btnBuyEquipHat.className = "btn btn-primary btn-touch-action btn-gold-accent";
+                btnBuyEquipHat.disabled = false;
+            }
+        }
 
         const birdImg = document.getElementById("preview-bird-img");
         const hatImg = document.getElementById("preview-hat-img");
@@ -462,7 +546,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (hatImg) {
-            const hatSrc = hatSources[window.playerHatId];
+            const hatSrc = hatSources[window.previewHatId];
             if (hatSrc) {
                 hatImg.src = hatSrc;
                 hatImg.style.display = "block";
@@ -488,9 +572,13 @@ document.addEventListener("DOMContentLoaded", () => {
         screens[screenKey].classList.add("active");
         if (screenKey === "mainMenu") {
             resetMainMenuUI();
+            fetchUserWallet(window.playerName);
         }
         if (screenKey === "gameView") {
             applyResponsiveLayout();
+        } else {
+            if (hudBossPanel) hudBossPanel.style.display = "none";
+            if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
         }
     }
 
@@ -506,17 +594,77 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     btnPrevHat.addEventListener("click", () => {
-        window.playerHatId = (window.playerHatId - 1 + hats.length) % hats.length;
+        window.previewHatId = (window.previewHatId - 1 + hats.length) % hats.length;
+        if (window.unlockedHats.includes(window.previewHatId)) {
+            window.playerHatId = window.previewHatId;
+        }
         updateCustomizationUI();
     });
 
     btnNextHat.addEventListener("click", () => {
-        window.playerHatId = (window.playerHatId + 1) % hats.length;
+        window.previewHatId = (window.previewHatId + 1) % hats.length;
+        if (window.unlockedHats.includes(window.previewHatId)) {
+            window.playerHatId = window.previewHatId;
+        }
         updateCustomizationUI();
     });
 
+    if (btnBuyEquipHat) {
+        btnBuyEquipHat.addEventListener("click", async () => {
+            const currentHat = hatCatalog[window.previewHatId];
+            const isOwned = window.unlockedHats.includes(window.previewHatId);
+
+            if (isOwned) {
+                window.playerHatId = window.previewHatId;
+                updateCustomizationUI();
+                audioManager.playSFX("point");
+                return;
+            }
+
+            // Purchasing Hat with Wallet Coins
+            if (window.userCoins < currentHat.price) {
+                alert(`Not enough coins! You need ${currentHat.price} coins, but only have ${window.userCoins} coins.\n\nPlay Rank or Multiplayer matches to earn coins!`);
+                return;
+            }
+
+            btnBuyEquipHat.disabled = true;
+            btnBuyEquipHat.textContent = "Purchasing...";
+
+            try {
+                const res = await fetch("/api/shop/buy-hat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        playerName: window.playerName,
+                        hatId: currentHat.hat_id
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    window.userCoins = data.balance;
+                    window.unlockedHats = data.unlockedHats || [...window.unlockedHats, currentHat.hat_id];
+                    window.playerHatId = currentHat.hat_id;
+                    updateWalletUI(window.userCoins);
+                    updateCustomizationUI();
+                    audioManager.playSFX("point");
+                } else {
+                    alert(data.error || "Failed to purchase hat.");
+                    updateCustomizationUI();
+                }
+            } catch (err) {
+                alert("Network error purchasing hat: " + err.message);
+                updateCustomizationUI();
+            }
+        });
+    }
+
     nameInput.addEventListener("input", (e) => {
         window.playerName = e.target.value.trim() || "BirdPlayer";
+    });
+
+    nameInput.addEventListener("change", (e) => {
+        window.playerName = e.target.value.trim() || "BirdPlayer";
+        fetchUserWallet(window.playerName);
     });
 
     // Revamped Main Menu Navigation Event Listeners
@@ -527,19 +675,22 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (btnMainCustomize) {
+        btnMainCustomize.addEventListener("click", () => {
+            window.previewHatId = window.playerHatId || 0;
+            if (mainMenuPrimaryActions) mainMenuPrimaryActions.style.display = "none";
+            if (mainMenuCustomizeView) mainMenuCustomizeView.style.display = "block";
+            fetchUserWallet(window.playerName);
+            updateCustomizationUI();
+        });
+    }
+
     if (btnPlayBack) {
         btnPlayBack.addEventListener("click", () => {
             resetMainMenuUI();
         });
     }
 
-    if (btnMainCustomize) {
-        btnMainCustomize.addEventListener("click", () => {
-            if (mainMenuPrimaryActions) mainMenuPrimaryActions.style.display = "none";
-            if (mainMenuCustomizeView) mainMenuCustomizeView.style.display = "block";
-            updateCustomizationUI();
-        });
-    }
 
     if (btnCustomizeDone) {
         btnCustomizeDone.addEventListener("click", () => {
@@ -969,7 +1120,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     </td>
                 </tr>
             `;
+            if (resultsRewardBanner) resultsRewardBanner.style.display = "none";
             return;
+        }
+
+        if (result.economy) {
+            if (resultsRewardBanner) resultsRewardBanner.style.display = "block";
+            if (resultsCoinsEarned) resultsCoinsEarned.textContent = `+${result.economy.coinsEarned || 0}`;
+            if (resultsNewBalance) resultsNewBalance.textContent = `Wallet: ${result.economy.newBalance || 0} Coins`;
+            updateWalletUI(result.economy.newBalance);
+        } else {
+            if (resultsRewardBanner) resultsRewardBanner.style.display = "none";
         }
 
         renderRankLeaderboardData(result.leaderboard, result.newEntry);
@@ -1469,6 +1630,8 @@ document.addEventListener("DOMContentLoaded", () => {
             cancelAnimationFrame(animationFrameId);
             animationFrameId = null;
         }
+        if (hudBossPanel) hudBossPanel.style.display = "none";
+        if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
     }
 
     // CENTRALIZED NATIVE WEBSOCKET MESSAGE DISPATCHER
@@ -1594,15 +1757,34 @@ document.addEventListener("DOMContentLoaded", () => {
                 window.localItemPickupCooldownUntil = null;
                 physics.isFrozen = true;
 
-                if (currentLobby && currentLobby.mode_id === "flappy_chained") {
+                if (currentLobby && currentLobby.mode_id === "flappy_boss") {
+                    if (hudInventory) hudInventory.style.display = "none";
+                    if (hudDash) hudDash.style.display = "none";
+                    if (hudBossPanel) hudBossPanel.style.display = "block";
+                    if (hudPipeCount && hudPipeCount.parentElement) hudPipeCount.parentElement.style.display = "none";
+                    if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
+                    physics.localBossLives = 2;
+                    physics.localIsDeadInBoss = false;
+                    renderer.bossState = null;
+                    if (hudPlayerLives) {
+                        hudPlayerLives.textContent = "❤️ LIVES: 2";
+                        hudPlayerLives.style.color = "#f7d51d";
+                    }
+                } else if (currentLobby && currentLobby.mode_id === "flappy_chained") {
                     if (hudInventory) hudInventory.style.display = "none";
                     if (hudDash) hudDash.style.display = "flex";
+                    if (hudBossPanel) hudBossPanel.style.display = "none";
+                    if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                 } else if (currentLobby && currentLobby.mode_id === "flappy_race") {
                     if (hudInventory) hudInventory.style.display = "flex";
                     if (hudDash) hudDash.style.display = "none";
+                    if (hudBossPanel) hudBossPanel.style.display = "none";
+                    if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                 } else {
                     if (hudInventory) hudInventory.style.display = "none";
                     if (hudDash) hudDash.style.display = "none";
+                    if (hudBossPanel) hudBossPanel.style.display = "none";
+                    if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                 }
 
                 startGameLoop();
@@ -1632,6 +1814,41 @@ document.addEventListener("DOMContentLoaded", () => {
             case "game_snapshot": {
                 physics.reconcileServerSnapshot(data);
                 updateInventoryUI(physics.localHeldItem);
+
+                // Update Boss Mode HUD & Intermission
+                if (data.bossState && hudBossPanel) {
+                    renderer.bossState = data.bossState;
+                    hudBossPanel.style.display = "block";
+                    const bs = data.bossState;
+                    if (hudBossName) {
+                        hudBossName.textContent = `BOSS ${bs.bossIndex}/3: ${(bs.name || "BOSS").toUpperCase()}`;
+                    }
+                    if (hudBossHpFill) {
+                        const hpPct = bs.maxHp > 0 ? Math.max(0, Math.min(100, (bs.hp / bs.maxHp) * 100)) : 0;
+                        hudBossHpFill.style.width = `${hpPct}%`;
+                    }
+                    if (hudPlayerLives) {
+                        if (physics.localIsDeadInBoss) {
+                            hudPlayerLives.textContent = `💀 DEAD`;
+                            hudPlayerLives.style.color = "#ff4757";
+                        } else {
+                            hudPlayerLives.textContent = `❤️ LIVES: ${physics.localBossLives !== undefined ? physics.localBossLives : 2}`;
+                            hudPlayerLives.style.color = "#f7d51d";
+                        }
+                    }
+                    if (bs.status === "intermission" && bs.intermissionRemaining !== undefined && bs.intermissionRemaining > 0) {
+                        if (bossIntermissionBanner) {
+                            bossIntermissionBanner.style.display = "block";
+                            if (bossIntermissionSeconds) bossIntermissionSeconds.textContent = bs.intermissionRemaining;
+                        }
+                    } else if (bossIntermissionBanner && bs.status !== "intermission") {
+                        bossIntermissionBanner.style.display = "none";
+                    }
+                } else if (renderer.bossState && !data.bossState) {
+                    renderer.bossState = null;
+                    if (hudBossPanel) hudBossPanel.style.display = "none";
+                    if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
+                }
 
                 if (data.finishCountdown !== null && data.finishCountdown >= 0) {
                     finishTimerBanner.style.display = "block";
@@ -2000,16 +2217,150 @@ document.addEventListener("DOMContentLoaded", () => {
                 break;
             }
 
+            case "boss_spawned": {
+                audioManager.playSFX("point");
+                if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
+                addActivityFeedLog(`👹 <span style="color: #ff4757; font-weight: bold;">BOSS ${data.bossIndex}/3: ${escapeHtml(data.bossName).toUpperCase()}</span> APPEARED!`);
+                break;
+            }
+
+            case "boss_damaged": {
+                audioManager.playSFX("point");
+                if (data.collectorId === localPlayerId) {
+                    addActivityFeedLog(`💥 <span style="color: #55b02e; font-weight: bold;">YOU</span> launched energy blast for <span style="color: #ff4757; font-weight: bold;">-${data.damage} HP</span>!`);
+                } else {
+                    addActivityFeedLog(`💥 <span style="color: #55b02e;">${escapeHtml(data.collectorName || "Player")}</span> hit Boss for <span style="color: #ff4757;">-${data.damage} HP</span>!`);
+                }
+                break;
+            }
+
+            case "player_shield_break": {
+                let targetX = null;
+                let targetY = null;
+                if (data && data.playerId === localPlayerId) {
+                    physics.localHasShield = false;
+                    targetX = physics.predictedState.x;
+                    targetY = physics.predictedState.y;
+                }
+                if (physics.remotePlayers.has(data.playerId)) {
+                    const rp = physics.remotePlayers.get(data.playerId);
+                    rp.hasShield = false;
+                    targetX = rp.x;
+                    targetY = rp.y;
+                }
+                if (renderer && typeof renderer.triggerShieldBreakEffect === "function" && targetX !== null && targetY !== null) {
+                    renderer.triggerShieldBreakEffect(targetX, targetY);
+                }
+                break;
+            }
+
+            case "player_boss_death": {
+                audioManager.playSFX("die");
+                if (data.playerId === localPlayerId) {
+                    physics.localIsDeadInBoss = true;
+                    physics.localBossLives = 0;
+                    if (hudPlayerLives) {
+                        hudPlayerLives.textContent = `💀 DEAD`;
+                        hudPlayerLives.style.color = "#ff4757";
+                    }
+                    addActivityFeedLog(`💀 <span style="color: #ff4757; font-weight: bold;">YOU DIED!</span> Waiting for team...`);
+                } else {
+                    if (physics.remotePlayers.has(data.playerId)) {
+                        const rp = physics.remotePlayers.get(data.playerId);
+                        rp.isDeadInBoss = true;
+                        rp.bossLives = 0;
+                    }
+                    addActivityFeedLog(`💀 <span style="color: #ff4757;">${escapeHtml(data.playerName || "Player")}</span> has fallen!`);
+                }
+                break;
+            }
+
+            case "boss_defeated": {
+                audioManager.playSFX("point");
+                addActivityFeedLog(`🏆 <span style="color: #55b02e; font-weight: bold;">BOSS ${data.bossIndex}/3 SLAIN: ${escapeHtml(data.bossName).toUpperCase()}!</span>`);
+                if (!data.isFinalBoss && bossIntermissionBanner) {
+                    bossIntermissionBanner.style.display = "block";
+                    if (bossIntermissionTitle) bossIntermissionTitle.textContent = `${(data.bossName || "BOSS").toUpperCase()} DEFEATED!`;
+                    if (bossIntermissionSeconds) bossIntermissionSeconds.textContent = "5";
+                }
+                break;
+            }
+
+            case "boss_players_revived": {
+                audioManager.playSFX("wing");
+                physics.localIsDeadInBoss = false;
+                physics.localIsKnockedDown = false;
+                physics.localIsReadyToFly = false;
+                physics.localBossLives = 2;
+                if (hudPlayerLives) {
+                    hudPlayerLives.textContent = `❤️ LIVES: 2`;
+                    hudPlayerLives.style.color = "#f7d51d";
+                }
+                addActivityFeedLog(`✨ <span style="color: #f7d51d; font-weight: bold;">ALL TEAMMATES REVIVED WITH 2 LIVES!</span>`);
+                break;
+            }
+
+            case "boss_intermission": {
+                if (bossIntermissionBanner) {
+                    bossIntermissionBanner.style.display = "block";
+                    if (bossIntermissionSeconds) bossIntermissionSeconds.textContent = data.countdown;
+                }
+                break;
+            }
+
+            case "boss_victory_run": {
+                audioManager.playSFX("point");
+                if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
+                addActivityFeedLog(`🎉 <span style="color: #55b02e; font-weight: bold;">FINAL BOSS SLAIN! FLY TO THE FINISH LINE!</span> 🏁`);
+                break;
+            }
+
+            case "boss_team_wipe": {
+                audioManager.playSFX("die");
+                addActivityFeedLog(`💀 <span style="color: #ff4757; font-weight: bold;">TEAM WIPEOUT! All players defeated!</span>`);
+                break;
+            }
+
             case "match_finished": {
                 stopGameLoop();
                 finishTimerBanner.style.display = "none";
+                if (hudBossPanel) hudBossPanel.style.display = "none";
+                if (bossIntermissionBanner) bossIntermissionBanner.style.display = "none";
                 showScreen("resultsView");
 
                 updateResultsHostState();
 
                 const isChainedMode = (data.mode_id === "flappy_chained");
+                const isBossMode = (data.mode_id === "flappy_boss");
 
-                if (isChainedMode) {
+                if (isBossMode) {
+                    resultsMainHeader.textContent = data.boss_victory ? "BOSS RAID CLEARED! 🏆" : "RAID DEFEATED 💀";
+                    resultsMainHeader.style.color = data.boss_victory ? "#55b02e" : "#ff4757";
+                    resultsSubHeader.style.display = "block";
+                    resultsSubHeader.textContent = data.boss_victory 
+                        ? `TEAM RAID TIME: ${data.team_total_time || "00:00.00"}` 
+                        : `ALL PLAYERS ELIMINATED BY BOSS`;
+
+                    leaderboardHead.innerHTML = `
+                        <tr>
+                            <th>PLAYER</th>
+                            <th>DAMAGE & STATUS</th>
+                            <th>RESULT</th>
+                        </tr>
+                    `;
+
+                    leaderboardBody.innerHTML = "";
+                    for (let entry of (data.leaderboard || [])) {
+                        const tr = document.createElement("tr");
+                        const resultColor = data.boss_victory ? "#55b02e" : "#ff4757";
+                        tr.innerHTML = `
+                            <td><strong>${escapeHtml(entry.name)}</strong></td>
+                            <td><span style="color: #f7d51d;">${escapeHtml(entry.status_text || "")}</span></td>
+                            <td><span style="color: ${resultColor}; font-weight: bold;">${data.boss_victory ? "VICTORY" : "DEFEAT"}</span></td>
+                        `;
+                        leaderboardBody.appendChild(tr);
+                    }
+                } else if (isChainedMode) {
                     resultsMainHeader.textContent = "FLAPPY CHAINED RESULTS";
                     resultsSubHeader.style.display = "block";
                     resultsSubHeader.textContent = `TEAM TOTAL TIME: ${data.team_total_time || "00:00.00"}`;
@@ -2061,6 +2412,34 @@ document.addEventListener("DOMContentLoaded", () => {
                         leaderboardBody.appendChild(tr);
                     }
                 }
+
+                // Multiplayer Mode: Economy Rewards
+                if (data.rewards && Array.isArray(data.rewards)) {
+                    const myReward = data.rewards.find(r => r.playerName === window.playerName || r.socketId === localPlayerId);
+                    if (myReward) {
+                        if (resultsRewardBanner) resultsRewardBanner.style.display = "block";
+                        if (resultsCoinsEarned) resultsCoinsEarned.textContent = `+${myReward.coinsEarned || 0}`;
+                        if (resultsNewBalance) resultsNewBalance.textContent = `Wallet: ${myReward.newBalance || 0} Coins`;
+                        updateWalletUI(myReward.newBalance);
+                    } else if (resultsRewardBanner) {
+                        resultsRewardBanner.style.display = "none";
+                    }
+                } else if (resultsRewardBanner) {
+                    resultsRewardBanner.style.display = "none";
+                }
+                break;
+            }
+
+            case "match_rewards": {
+                if (data.rewards && Array.isArray(data.rewards)) {
+                    const myReward = data.rewards.find(r => r.playerName === window.playerName || r.socketId === localPlayerId);
+                    if (myReward) {
+                        if (resultsRewardBanner) resultsRewardBanner.style.display = "block";
+                        if (resultsCoinsEarned) resultsCoinsEarned.textContent = `+${myReward.coinsEarned || 0}`;
+                        if (resultsNewBalance) resultsNewBalance.textContent = `Wallet: ${myReward.newBalance || 0} Coins`;
+                        updateWalletUI(myReward.newBalance);
+                    }
+                }
                 break;
             }
 
@@ -2094,6 +2473,27 @@ document.addEventListener("DOMContentLoaded", () => {
             case "rank_leaderboard_data": {
                 console.log("[Rank Mode] Received leaderboard data from Supabase:", data);
                 renderRankLeaderboardData(data.leaderboard);
+                break;
+            }
+
+            case "wallet_data": {
+                if (data) {
+                    updateWalletUI(data.balance);
+                    window.unlockedHats = Array.isArray(data.unlocked_hats) ? data.unlocked_hats : [0, 3];
+                    updateCustomizationUI();
+                }
+                break;
+            }
+
+            case "buy_hat_result": {
+                if (data && data.success) {
+                    window.userCoins = data.balance;
+                    window.unlockedHats = data.unlockedHats || [...window.unlockedHats, data.hatId];
+                    window.playerHatId = data.hatId;
+                    updateWalletUI(data.balance);
+                    updateCustomizationUI();
+                    if (audioManager) audioManager.playSFX("point");
+                }
                 break;
             }
 
@@ -2219,4 +2619,5 @@ document.addEventListener("DOMContentLoaded", () => {
     if (pingTracker) updateNetworkIndicatorUI(pingTracker.getStatus());
 
     updateCustomizationUI();
+    fetchUserWallet(window.playerName || (nameInput && nameInput.value) || "FlappyHero");
 });

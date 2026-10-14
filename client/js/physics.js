@@ -73,6 +73,7 @@ class PhysicsEngine {
         this.localItemPickupCooldownUntil = null;
         this.localDashCooldownUntil = null;
         this.localChainIndex = 0;
+        this.localIsDeadInBoss = false;
         this.lastSnapshotTick = 0;
         this.clearRemotePlayers(); // Enforce strict state wipe on local reset
     }
@@ -134,9 +135,10 @@ class PhysicsEngine {
 
     // Process local jump input instantly for zero latency
     handleLocalJump() {
-        if (this.isFrozen || this.localIsFinished || this.localIsFrozenInIce) return null;
+        if (this.isFrozen || this.localIsFinished || this.localIsFrozenInIce || this.localIsDeadInBoss) return null;
 
         if (this.localIsKnockedDown) {
+            if (this.localIsDeadInBoss) return null;
             const now = Date.now();
             const isReady = this.localIsReadyToFly || (this.localKnockdownUntil && now >= this.localKnockdownUntil);
             if (!isReady) {
@@ -257,8 +259,13 @@ class PhysicsEngine {
             return;
         }
 
-        const speedMult = (this.localSpeedMultiplier !== undefined && this.localSpeedMultiplier !== null) ? this.localSpeedMultiplier : 1.0;
-        this.predictedState.x += this.forwardVelocity * speedMult;
+        const isBossMode = (typeof window !== "undefined" && window.currentLobby && window.currentLobby.mode_id === "flappy_boss");
+        const isVictoryRun = (typeof window !== "undefined" && window.currentBossState && window.currentBossState.status === "victory_run");
+
+        if (!isBossMode || isVictoryRun) {
+            const speedMult = (this.localSpeedMultiplier !== undefined && this.localSpeedMultiplier !== null) ? this.localSpeedMultiplier : 1.0;
+            this.predictedState.x += this.forwardVelocity * speedMult;
+        }
         this.predictedState.velocityY += this.gravity;
         this.predictedState.y = Math.max(0, this.predictedState.y + this.predictedState.velocityY);
 
@@ -333,6 +340,8 @@ class PhysicsEngine {
                 this.localIsFinished = serverPlayer.is_finished || false;
                 this.localIsFrozenInIce = serverPlayer.isFrozenInIce || false;
                 this.localIsBucketHead = serverPlayer.isBucketHead || false;
+                this.localBossLives = serverPlayer.bossLives !== undefined ? serverPlayer.bossLives : 2;
+                this.localIsDeadInBoss = serverPlayer.isDeadInBoss || false;
 
                 // Detect status transition triggers for local player
                 if (hadShield && !this.localHasShield) {
@@ -442,7 +451,9 @@ class PhysicsEngine {
                         isFrozenInIce: serverPlayer.isFrozenInIce,
                         heldItem: serverPlayer.heldItem,
                         dashCooldownUntil: serverPlayer.dashCooldownUntil || null,
-                        speedMultiplier: serverPlayer.speedMultiplier
+                        speedMultiplier: serverPlayer.speedMultiplier,
+                        bossLives: serverPlayer.bossLives !== undefined ? serverPlayer.bossLives : 2,
+                        isDeadInBoss: serverPlayer.isDeadInBoss || false
                     };
                     this.remotePlayers.set(serverPlayer.player_id, remote);
                 } else {
@@ -479,6 +490,8 @@ class PhysicsEngine {
                     remote.isFrozenInIce = serverPlayer.isFrozenInIce;
                     remote.heldItem = serverPlayer.heldItem;
                     remote.speedMultiplier = serverPlayer.speedMultiplier;
+                    remote.bossLives = serverPlayer.bossLives !== undefined ? serverPlayer.bossLives : 2;
+                    remote.isDeadInBoss = serverPlayer.isDeadInBoss || false;
                 }
             }
         }

@@ -29,6 +29,39 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
     let currentX = startX;
     let computedFinishLineX = 0;
 
+    // Special Handling for Boss Mode: Arena with NO pipes, volcano theme for Boss 1
+    if (modeId === "flappy_boss") {
+        const startCheckpointId = `chk_${lobbyId}_0`;
+        checkpoints.set(startCheckpointId, new Checkpoint(
+            startCheckpointId,
+            `map_${lobbyId}_1`,
+            80,
+            320,
+            0
+        ));
+        const bossMap = new MapData(
+            `map_${lobbyId}_1`,
+            startCheckpointId,
+            "Boss Raid Arena",
+            1,
+            true,
+            80,
+            320,
+            [],
+            [],
+            [],
+            "volcano"
+        );
+        return {
+            maps: [bossMap],
+            checkpoints,
+            itemBoxes: [],
+            startCheckpointId,
+            finishLineX: 550,
+            totalPipes: 0
+        };
+    }
+
     // Initial starting checkpoint 0
     const startCheckpointId = `chk_${lobbyId}_0`;
     checkpoints.set(startCheckpointId, new Checkpoint(

@@ -1,7 +1,8 @@
 const crypto = require("crypto");
 
-function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = null) {
+function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = null, economyServiceInstance = null) {
     const rankManager = rankManagerInstance || require("../game/rankManager");
+    const economyService = economyServiceInstance || require("../services/economyService");
 
     // Support both (wss, clients, lobbyManager) and (wss, lobbyManager)
     if (!lobbyManager && clients) {
@@ -209,6 +210,42 @@ function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = nul
                     } catch (err) {
                         console.error("[WebSocket] get_rank_leaderboard error:", err);
                     }
+                    break;
+                }
+
+                case "get_wallet": {
+                    const name = data && data.playerName ? data.playerName : "FlappyHero";
+                    economyService.getOrCreatePlayer(name).then(player => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "wallet_data",
+                                data: {
+                                    player_id: player.player_id,
+                                    player_name: player.player_name,
+                                    balance: player.balance,
+                                    unlocked_hats: player.unlocked_hats
+                                }
+                            }));
+                        }
+                    }).catch(err => {
+                        console.error("[WebSocket] get_wallet error:", err);
+                    });
+                    break;
+                }
+
+                case "buy_hat": {
+                    const name = data && data.playerName ? data.playerName : "FlappyHero";
+                    const hatId = data && data.hatId !== undefined ? data.hatId : 0;
+                    economyService.buyHat(name, hatId).then(result => {
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "buy_hat_result",
+                                data: result
+                            }));
+                        }
+                    }).catch(err => {
+                        console.error("[WebSocket] buy_hat error:", err);
+                    });
                     break;
                 }
 

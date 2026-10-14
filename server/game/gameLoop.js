@@ -1,5 +1,7 @@
 const { performance } = require("perf_hooks");
 const LeaderboardEntry = require("../models/Leaderboard");
+const economyService = require("../services/economyService");
+const BossManager = require("./bossManager");
 const {
     TICK_RATE,
     TICK_INTERVAL,
@@ -37,6 +39,7 @@ class GameEngine {
         this.lastTime = 0;
         this.inputQueues = new Map(); // socketId -> Array of { sequence, action, timestamp }
         this.tickCount = 0;
+        this.bossManager = null;
     }
 
     broadcast(type, data) {
@@ -64,13 +67,24 @@ class GameEngine {
         const startX = startCheckpoint ? startCheckpoint.respawn_coordinate_x : 100;
         const startY = startCheckpoint ? startCheckpoint.respawn_coordinate_y : 320;
 
-        let chainIdx = 0;
-        for (let player of this.lobby.players.values()) {
-            player.chain_index = chainIdx;
-            const xOffset = (this.lobby.mode_id === "flappy_chained") ? (chainIdx * CHAIN_SPACING_X) : 0;
-            player.resetForMatch(startX - xOffset, startY, this.lobby.startCheckpointId);
-            this.inputQueues.set(player.player_id, []);
-            chainIdx++;
+        if (this.lobby.mode_id === "flappy_boss") {
+            let pIdx = 0;
+            for (let player of this.lobby.players.values()) {
+                const fixedX = 60 + pIdx * 25;
+                player.resetForMatch(fixedX, 300, this.lobby.startCheckpointId);
+                this.inputQueues.set(player.player_id, []);
+                pIdx++;
+            }
+            this.bossManager = new BossManager(this.lobby, this);
+        } else {
+            let chainIdx = 0;
+            for (let player of this.lobby.players.values()) {
+                player.chain_index = chainIdx;
+                const xOffset = (this.lobby.mode_id === "flappy_chained") ? (chainIdx * CHAIN_SPACING_X) : 0;
+                player.resetForMatch(startX - xOffset, startY, this.lobby.startCheckpointId);
+                this.inputQueues.set(player.player_id, []);
+                chainIdx++;
+            }
         }
 
         // Start high-precision fixed timestep loop
@@ -152,7 +166,7 @@ class GameEngine {
                 player.y = GROUND_Y - BIRD_HEIGHT;
                 player.velocityY = 0;
 
-                if (now >= player.knockdownUntil && !player.isReadyToFly) {
+                if (now >= player.knockdownUntil && !player.isReadyToFly && !player.isDeadInBoss) {
                     player.isReadyToFly = true;
                     this.broadcast("player_ready_to_fly", {
                         playerId: player.player_id
@@ -168,8 +182,8 @@ class GameEngine {
 
                 if (input.action === "jump") {
                     if (player.isKnockedDown) {
-                        if (player.isReadyToFly) {
-                            // Flap to recover and get back into race
+                        if (player.isReadyToFly && !player.isDeadInBoss) {
+                            // Flap to recover and get back into action
                             player.isKnockedDown = false;
                             player.isReadyToFly = false;
                             player.knockdownUntil = null;
@@ -186,14 +200,16 @@ class GameEngine {
                             });
                         }
                         // If knocked down but not ready to fly yet (within 5s), jump input is ignored
-                    } else if (!player.isFrozenInIce) {
+                    } else if (!player.isFrozenInIce && !player.isDeadInBoss) {
                         player.velocityY = JUMP_VELOCITY;
                     }
                 } else if (input.action === "dash") {
-                    if (!player.isKnockedDown && !player.isFrozenInIce && !player.is_finished && player.is_alive) {
+                    if (!player.isKnockedDown && !player.isFrozenInIce && !player.is_finished && player.is_alive && !player.isDeadInBoss) {
                         if (!player.dashCooldownUntil || now >= player.dashCooldownUntil) {
                             player.dashCooldownUntil = now + DASH_COOLDOWN_MS;
-                            player.x += DASH_BURST_X;
+                            if (this.lobby.mode_id !== "flappy_boss") {
+                                player.x += DASH_BURST_X;
+                            }
                             player.velocityY = Math.min(player.velocityY, -1.5);
                             this.broadcast("player_dashed", {
                                 playerId: player.player_id,
@@ -215,49 +231,65 @@ class GameEngine {
             } else if (player.isFrozenInIce) {
                 player.velocityY = 0;
             } else {
-                player.x += FORWARD_VELOCITY * (player.speedMultiplier || 1.0);
+                if (this.lobby.mode_id !== "flappy_boss" || (this.bossManager && this.bossManager.status === "victory_run")) {
+                    player.x += FORWARD_VELOCITY * (player.speedMultiplier || 1.0);
+                }
                 player.velocityY += GRAVITY;
                 player.y = Math.max(0, player.y + player.velocityY);
             }
         }
 
-        // Phase 2: Chained Mode Tether Physics (apply distance constraint & tension pull between connected birds)
-        if (this.lobby.mode_id === "flappy_chained") {
+        // Phase 2: Boss Mode Manager or Chained Mode Tether Physics
+        if (this.lobby.mode_id === "flappy_boss") {
+            if (this.bossManager) {
+                this.bossManager.update(now);
+            }
+        } else if (this.lobby.mode_id === "flappy_chained") {
             this.applyChainedTetherPhysics();
         }
 
         // Phase 3: Update progress, check collisions, item boxes, and finish line
-        for (let player of this.lobby.players.values()) {
-            if (player.is_finished) continue;
+        if (this.lobby.mode_id !== "flappy_boss") {
+            for (let player of this.lobby.players.values()) {
+                if (player.is_finished) continue;
 
-            // Check pipe progress and update checkpoint
-            this.updatePlayerProgress(player);
+                // Check pipe progress and update checkpoint
+                this.updatePlayerProgress(player);
 
-            // Collision check
-            const collided = this.checkCollisions(player);
-            if (collided) {
-                // Track culprit player who crashed
-                player.wipes_caused = (player.wipes_caused || 0) + 1;
+                // Collision check
+                const collided = this.checkCollisions(player);
+                if (collided) {
+                    player.wipes_caused = (player.wipes_caused || 0) + 1;
+                    this.triggerKnockdown(player);
+                }
 
-                // Both Flappy Race and Flappy Chained modes use Knockdown & Falling (นกชนแล้วตกลงพื้น)
-                this.triggerKnockdown(player);
+                // Item Box collection check
+                this.checkItemBoxCollisions(player);
+
+                // Finish Line check
+                if (player.x >= this.lobby.finishLineX && !player.is_finished) {
+                    player.is_finished = true;
+                    const elapsedSec = ((now - this.lobby.matchStartTime) / 1000).toFixed(2);
+                    player.finish_time = elapsedSec + "s";
+
+                    // Start 10-second finish countdown if first player to finish
+                    if (this.lobby.finishTimerStart === null) {
+                        this.lobby.finishTimerStart = now;
+                        this.broadcast("finish_timer_started", {
+                            countdownSeconds: 10
+                        });
+                    }
+                }
             }
-
-            // Item Box collection check
-            this.checkItemBoxCollisions(player);
-
-            // Finish Line check
-            if (player.x >= this.lobby.finishLineX && !player.is_finished) {
-                player.is_finished = true;
-                const elapsedSec = ((now - this.lobby.matchStartTime) / 1000).toFixed(2);
-                player.finish_time = elapsedSec + "s";
-
-                // Start 10-second finish countdown if first player to finish
-                if (this.lobby.finishTimerStart === null) {
-                    this.lobby.finishTimerStart = now;
-                    this.broadcast("finish_timer_started", {
-                        countdownSeconds: 10
-                    });
+        } else {
+            // Boss Mode Phase 3: Check finish line during victory run
+            if (this.bossManager && this.bossManager.status === "victory_run") {
+                for (let player of this.lobby.players.values()) {
+                    if (player.x >= this.lobby.finishLineX && !player.is_finished) {
+                        player.is_finished = true;
+                        const elapsedSec = ((now - this.lobby.matchStartTime) / 1000).toFixed(2);
+                        player.finish_time = elapsedSec + "s";
+                    }
                 }
             }
         }
@@ -753,7 +785,9 @@ class GameEngine {
                 isReadyToFly: p.isReadyToFly || false,
                 isBucketHead: p.isBucketHead || false,
                 isFrozenInIce: p.isFrozenInIce || false,
-                speedMultiplier: p.speedMultiplier
+                speedMultiplier: p.speedMultiplier,
+                bossLives: p.bossLives !== undefined ? p.bossLives : 2,
+                isDeadInBoss: p.isDeadInBoss || false
             });
         }
 
@@ -779,11 +813,12 @@ class GameEngine {
             serverTime: Date.now(),
             players: playersSnapshot,
             itemBoxes: sanitizedItemBoxes,
-            finishCountdown: remainingCountdown
+            finishCountdown: remainingCountdown,
+            bossState: this.bossManager ? this.bossManager.getState() : null
         });
     }
 
-    endMatch() {
+    endMatch(bossVictory = true) {
         this.stop();
         this.lobby.status = "finished";
 
@@ -794,6 +829,55 @@ class GameEngine {
         const teamTotalTimeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(2, '0')}`;
 
         const playerList = Array.from(this.lobby.players.values());
+
+        // Special handling for Boss Mode Results
+        if (this.lobby.mode_id === "flappy_boss") {
+            const clearedBosses = this.bossManager ? (bossVictory ? 3 : Math.max(0, this.bossManager.bossIndex - 1)) : 0;
+            const leaderboardEntries = [];
+            let rank = 1;
+            for (let p of playerList) {
+                const dmg = this.bossManager ? (this.bossManager.playerDamage.get(p.player_id) || 0) : 0;
+                const statusStr = bossVictory 
+                    ? `[ VICTORY ] RAID CLEARED (Dmg: ${dmg})` 
+                    : `[ DEFEAT ] WIPED OUT AT BOSS ${this.bossManager ? this.bossManager.bossIndex : 1} (Dmg: ${dmg})`;
+                const lbEntry = new LeaderboardEntry(
+                    `lb_${this.lobby.Lobby_id}_${p.player_id}`,
+                    p.player_id,
+                    this.lobby.Lobby_id,
+                    teamTotalTimeStr,
+                    rank++,
+                    p.name,
+                    statusStr,
+                    p.wipes_caused || 0,
+                    p.skin_ID || 0,
+                    p.hat_ID || 0
+                );
+                leaderboardEntries.push(lbEntry);
+            }
+            this.lobby.leaderboard = leaderboardEntries;
+
+            let rewards = [];
+            try {
+                economyService.rewardBossMode(playerList, clearedBosses, bossVictory).then(r => {
+                    rewards = r;
+                    this.broadcast("match_rewards", { rewards });
+                }).catch(err => {
+                    console.error("[Economy] Boss reward error:", err.message);
+                });
+            } catch (err) {
+                console.error("[Economy] Failed to trigger boss rewards:", err.message);
+            }
+
+            this.broadcast("match_finished", {
+                lobby_id: this.lobby.Lobby_id,
+                mode_id: this.lobby.mode_id,
+                team_total_time: teamTotalTimeStr,
+                boss_victory: bossVictory,
+                leaderboard: leaderboardEntries,
+                rewards
+            });
+            return;
+        }
         
         const finishedPlayers = playerList.filter(p => p.is_finished);
         const dnfPlayers = playerList.filter(p => !p.is_finished);
@@ -840,11 +924,40 @@ class GameEngine {
 
         this.lobby.leaderboard = leaderboardEntries;
 
+        // Authoritative Economy: Calculate and distribute placement/completion rewards
+        let rewards = [];
+        try {
+            if (this.lobby.mode_id === "flappy_chained") {
+                economyService.rewardChainedMode(playerList, teamTotalTimeStr).then(r => {
+                    rewards = r;
+                    this.broadcast("match_rewards", { rewards });
+                }).catch(err => {
+                    console.error("[Economy] Chained reward error:", err.message);
+                });
+            } else {
+                const placementData = leaderboardEntries.map(e => ({
+                    playerId: e.player_id,
+                    name: e.name,
+                    ranking: e.ranking || 99,
+                    finished: e.finish_time !== null
+                }));
+                economyService.rewardMultiplayerPlacement(placementData).then(r => {
+                    rewards = r;
+                    this.broadcast("match_rewards", { rewards });
+                }).catch(err => {
+                    console.error("[Economy] Race reward error:", err.message);
+                });
+            }
+        } catch (ecoErr) {
+            console.error("[Economy] Failed to trigger match rewards:", ecoErr.message);
+        }
+
         this.broadcast("match_finished", {
             lobby_id: this.lobby.Lobby_id,
             mode_id: this.lobby.mode_id,
             team_total_time: teamTotalTimeStr,
-            leaderboard: leaderboardEntries
+            leaderboard: leaderboardEntries,
+            rewards
         });
     }
 }

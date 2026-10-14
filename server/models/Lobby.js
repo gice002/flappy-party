@@ -38,7 +38,8 @@ class Lobby {
     }
 
     allPlayersReady() {
-        if (this.players.size < 2) return false;
+        const minPlayers = (this.mode_id === "flappy_boss") ? 1 : 2;
+        if (this.players.size < minPlayers) return false;
         for (let player of this.players.values()) {
             if (!player.ready_status) return false;
         }

@@ -6,6 +6,7 @@ const { WebSocketServer } = require("ws");
 const LobbyManager = require("./game/lobbyManager");
 const rankManager = require("./game/rankManager");
 const supabaseLeaderboard = require("./services/supabaseClient");
+const economyService = require("./services/economyService");
 const initSocketHandler = require("./sockets/socketHandler");
 
 const app = express();
@@ -92,9 +93,96 @@ app.post("/api/rank/game-over", async (req, res) => {
     }
 });
 
+// ====================================================================
+// REST API ENDPOINTS FOR WALLET, SHOP & TRANSACTION LOGS
+// ====================================================================
+
+// GET /api/shop/hats - Get list of hats with pricing and unlock requirements
+app.get("/api/shop/hats", (req, res) => {
+    res.status(200).json({
+        success: true,
+        hats: economyService.getHatsCatalog()
+    });
+});
+
+// GET /api/player/profile or /api/player/wallet - Get player wallet balance & unlocked hats
+app.get("/api/player/wallet", async (req, res) => {
+    try {
+        const playerName = req.query.name || "FlappyHero";
+        const player = await economyService.getOrCreatePlayer(playerName);
+        res.status(200).json({
+            success: true,
+            player_id: player.player_id,
+            player_name: player.player_name,
+            balance: player.balance,
+            unlocked_hats: player.unlocked_hats
+        });
+    } catch (err) {
+        console.error("[API] Error fetching player wallet:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/shop/buy-hat - Purchase / unlock a hat with wallet balance
+app.post("/api/shop/buy-hat", async (req, res) => {
+    try {
+        const { playerName, hatId } = req.body || {};
+        const result = await economyService.buyHat(playerName, hatId);
+        res.status(200).json(result);
+    } catch (err) {
+        console.error("[API] Error purchasing hat:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/player/transactions - Get transaction log history
+app.get("/api/player/transactions", async (req, res) => {
+    try {
+        const playerName = req.query.name || "FlappyHero";
+        const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
+        const logs = await economyService.getTransactionLogs(playerName, limit);
+        res.status(200).json({ success: true, logs });
+    } catch (err) {
+        console.error("[API] Error fetching transaction logs:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/auth/register-login - Plain-text login/registration in Login table
+app.post("/api/auth/register-login", async (req, res) => {
+    try {
+        const { username, password, playerName } = req.body || {};
+        if (!username || !password) {
+            return res.status(400).json({ success: false, error: "Username and password required" });
+        }
+        const effectiveName = playerName || username;
+        const player = await economyService.getOrCreatePlayer(effectiveName);
+
+        if (economyService.pgPool) {
+            await economyService.pgPool.query(
+                `INSERT INTO public.login (player_id, username, password)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (username) DO UPDATE SET password = $3`,
+                [player.player_id, username, password]
+            );
+        }
+
+        res.status(200).json({
+            success: true,
+            player_id: player.player_id,
+            player_name: player.player_name,
+            balance: player.balance,
+            unlocked_hats: player.unlocked_hats
+        });
+    } catch (err) {
+        console.error("[API] Error in register-login:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Instantiate Lobby Manager & WebSocket Handlers
 const lobbyManager = new LobbyManager(clients);
-initSocketHandler(wss, clients, lobbyManager, rankManager);
+initSocketHandler(wss, clients, lobbyManager, rankManager, economyService);
 
 function startServer(portToUse) {
     server.removeAllListeners("error");

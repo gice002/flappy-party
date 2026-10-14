@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const supabaseLeaderboard = require("../services/supabaseClient");
+const economyService = require("../services/economyService");
 
 class RankManager {
     constructor() {
@@ -71,6 +72,15 @@ class RankManager {
 
         // Authoritative write directly to Supabase via backend service
         const result = await supabaseLeaderboard.recordScore(nameToUse, verifiedScore);
+
+        // Authoritative Economy: Calculate & award coins to player wallet
+        try {
+            const reward = await economyService.rewardRankMode(nameToUse, verifiedScore);
+            result.economy = reward;
+        } catch (ecoErr) {
+            console.error("[RankManager] Error awarding rank coins:", ecoErr.message);
+        }
+
         return result;
     }
 
