@@ -98,7 +98,8 @@ class CanvasRenderer {
             winflag: "assets/images/winflag.png",
             lucky_block: "assets/images/items/lucky_block.png",
             box: "assets/images/items/lucky_block.png",
-            deathnote: "assets/images/items/DeathNote.webp"
+            deathnote: "assets/images/items/DeathNote.webp",
+            swap: "assets/images/items/swap.png"
         };
 
         for (let key in sources) {
@@ -185,6 +186,10 @@ class CanvasRenderer {
 
         if (!this.itemImages.deathnote) {
             this.itemImages.deathnote = this.images.deathnote;
+        }
+
+        if (!this.itemImages.swap) {
+            this.itemImages.swap = this.images.swap;
         }
     }
 
@@ -1247,46 +1252,42 @@ class CanvasRenderer {
         }
         this.ctx.globalAlpha = alpha;
 
-        // 1. Metal bucket texture overlay
-        const bucketOverlayImg = (this.itemImages && (this.itemImages.inbucket || this.itemImages.ink_splat)) || this.images.inbucket;
-        if (bucketOverlayImg && bucketOverlayImg.complete) {
-            this.ctx.drawImage(bucketOverlayImg, 0, 0, this.width, this.height);
-        } else {
-            this.ctx.fillStyle = "rgba(18, 16, 22, 0.88)";
-            this.ctx.fillRect(0, 0, this.width, this.height);
-        }
-
-        // 2. Heavy Forward Vision Blindness: dark fog on right 65% of screen where pipes approach
+        // Heavy Vision Darkness Effect: Pure dark radial fog obscuring forward vision and surrounding pipes
         const localBird = this.physics ? this.physics.predictedState : null;
         const birdScreenX = localBird ? (localBird.x - this.cameraX + 17) : (this.width * 0.3);
         const birdScreenY = localBird ? (localBird.y + 12) : (this.height * 0.5);
 
         const blindGrad = this.ctx.createRadialGradient(
-            birdScreenX, birdScreenY, 35,
-            birdScreenX + 90, birdScreenY, 210
+            birdScreenX, birdScreenY, 30,
+            birdScreenX + 80, birdScreenY, 200
         );
-        blindGrad.addColorStop(0, "rgba(0, 0, 0, 0.05)");
-        blindGrad.addColorStop(0.35, "rgba(20, 15, 10, 0.80)");
-        blindGrad.addColorStop(0.7, "rgba(10, 8, 8, 0.96)");
-        blindGrad.addColorStop(1, "rgba(5, 5, 5, 0.99)");
+        blindGrad.addColorStop(0, "rgba(0, 0, 0, 0.10)");
+        blindGrad.addColorStop(0.35, "rgba(12, 10, 16, 0.85)");
+        blindGrad.addColorStop(0.7, "rgba(8, 6, 10, 0.97)");
+        blindGrad.addColorStop(1, "rgba(2, 2, 4, 0.99)");
 
         this.ctx.fillStyle = blindGrad;
         this.ctx.fillRect(0, 0, this.width, this.height);
 
-        // 3. Bucket slits frame
-        this.ctx.strokeStyle = "rgba(0, 0, 0, 0.92)";
-        this.ctx.lineWidth = 14;
-        this.ctx.strokeRect(0, 0, this.width, this.height);
+        // Ambient dark vignette across whole screen
+        const screenEdgeGrad = this.ctx.createRadialGradient(
+            this.width / 2, this.height / 2, this.width * 0.35,
+            this.width / 2, this.height / 2, this.width * 0.75
+        );
+        screenEdgeGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
+        screenEdgeGrad.addColorStop(1, "rgba(0, 0, 0, 0.85)");
+        this.ctx.fillStyle = screenEdgeGrad;
+        this.ctx.fillRect(0, 0, this.width, this.height);
 
-        // 4. Retro warning header
+        // Retro warning header
         this.ctx.fillStyle = "#f39c12";
         this.ctx.strokeStyle = "#000000";
         this.ctx.lineWidth = 3;
         this.ctx.font = "8px 'Press Start 2P', monospace";
         this.ctx.textAlign = "center";
         const wobble = Math.sin(now / 120) * 2;
-        this.ctx.strokeText("BUCKET HEAD BLINDNESS!", this.width / 2, 70 + wobble);
-        this.ctx.fillText("BUCKET HEAD BLINDNESS!", this.width / 2, 70 + wobble);
+        this.ctx.strokeText("VISION BLINDNESS!", this.width / 2, 70 + wobble);
+        this.ctx.fillText("VISION BLINDNESS!", this.width / 2, 70 + wobble);
 
         this.ctx.restore();
     }
@@ -1432,13 +1433,6 @@ class CanvasRenderer {
                 this.ctx.moveTo(screenX, 0);
                 this.ctx.lineTo(screenX, 616);
                 this.ctx.stroke();
-
-                this.ctx.fillStyle = "#3993d0";
-                this.ctx.fillRect(screenX - 15, 40, 30, 20);
-                this.ctx.fillStyle = "#ffffff";
-                this.ctx.font = "8px 'Press Start 2P'";
-                this.ctx.textAlign = "center";
-                this.ctx.fillText("CHK", screenX, 54);
                 this.ctx.restore();
             }
         }

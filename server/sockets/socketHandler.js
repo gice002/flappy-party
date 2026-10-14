@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 
-function initSocketHandler(wss, clients, lobbyManager) {
+function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = null) {
+    const rankManager = rankManagerInstance || require("../game/rankManager");
+
     // Support both (wss, clients, lobbyManager) and (wss, lobbyManager)
     if (!lobbyManager && clients) {
         lobbyManager = clients;
@@ -34,6 +36,22 @@ function initSocketHandler(wss, clients, lobbyManager) {
                 });
             });
 
+            socket.on("start_rank_session", (data) => {
+                const session = rankManager.startSession(socket.id, data && data.playerName);
+                socket.emit("rank_session_started", session);
+            });
+
+            socket.on("rank_game_over", async (data) => {
+                const result = await rankManager.handleGameOver(socket.id, data);
+                socket.emit("rank_game_over_result", result);
+            });
+
+            socket.on("get_rank_leaderboard", async (data) => {
+                const limit = data && data.limit ? parseInt(data.limit, 10) : 10;
+                const topScores = await rankManager.getLeaderboard(limit);
+                socket.emit("rank_leaderboard_data", { leaderboard: topScores });
+            });
+
             socket.on("network_ping", (data) => {
                 socket.emit("network_pong", {
                     id: (data && data.id) !== undefined ? data.id : null,
@@ -42,6 +60,7 @@ function initSocketHandler(wss, clients, lobbyManager) {
             });
 
             socket.on("disconnect", () => {
+                rankManager.handleDisconnect(socket.id);
                 lobbyManager.handleDisconnect(socket);
                 if (lobbyManager.clients) lobbyManager.clients.delete(playerId);
             });
@@ -87,7 +106,7 @@ function initSocketHandler(wss, clients, lobbyManager) {
             ws.isAlive = true;
         });
 
-        ws.on("message", (message) => {
+        ws.on("message", async (message) => {
             let parsed;
             try {
                 parsed = JSON.parse(message.toString());
@@ -145,6 +164,54 @@ function initSocketHandler(wss, clients, lobbyManager) {
                 case "client_ready":
                     lobbyManager.clientReady(ws);
                     break;
+
+                // ============================================================
+                // AUTHORITATIVE SUPABASE RANK MODE & LEADERBOARD EVENTS
+                // ============================================================
+                case "start_rank_session": {
+                    const session = rankManager.startSession(ws.id, data.playerName);
+                    if (ws.readyState === 1) {
+                        ws.send(JSON.stringify({
+                            type: "rank_session_started",
+                            data: session
+                        }));
+                    }
+                    break;
+                }
+
+                case "rank_game_over": {
+                    try {
+                        const result = await rankManager.handleGameOver(ws.id, data);
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "rank_game_over_result",
+                                data: result
+                            }));
+                        }
+                    } catch (err) {
+                        console.error("[WebSocket] rank_game_over error:", err);
+                    }
+                    break;
+                }
+
+                case "get_rank_leaderboard": {
+                    try {
+                        const limit = data && data.limit ? parseInt(data.limit, 10) : 10;
+                        const topScores = await rankManager.getLeaderboard(limit);
+                        if (ws.readyState === 1) {
+                            ws.send(JSON.stringify({
+                                type: "rank_leaderboard_data",
+                                data: {
+                                    leaderboard: topScores
+                                }
+                            }));
+                        }
+                    } catch (err) {
+                        console.error("[WebSocket] get_rank_leaderboard error:", err);
+                    }
+                    break;
+                }
+
                 case "network_ping":
                     if (ws.readyState === 1) { // 1 === WebSocket.OPEN
                         ws.send(JSON.stringify({
@@ -163,6 +230,7 @@ function initSocketHandler(wss, clients, lobbyManager) {
 
         ws.on("close", () => {
             console.log(`[WebSocket] Client disconnected: ${ws.id}`);
+            rankManager.handleDisconnect(ws.id);
             lobbyManager.handleDisconnect(ws);
             if (clients) clients.delete(ws.id);
         });

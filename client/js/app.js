@@ -249,6 +249,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnMainCustomize = document.getElementById("btn-main-customize");
     const btnMainSettings = document.getElementById("btn-main-settings");
     const btnPlayRank = document.getElementById("btn-play-rank");
+    const btnViewLeaderboard = document.getElementById("btn-view-leaderboard");
     const btnPlayBack = document.getElementById("btn-play-back");
     const btnCustomizeDone = document.getElementById("btn-customize-done");
     const mainMenuPrimaryActions = document.getElementById("main-menu-primary-actions");
@@ -558,53 +559,128 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (btnViewLeaderboard) {
+        btnViewLeaderboard.addEventListener("click", () => {
+            fetchAndShowLeaderboard();
+        });
+    }
+
     // ============================================================
-    // RANK MODE (CLASSIC SOLO) & MOCK DATABASE / LEADERBOARD
+    // RANK MODE (CLASSIC SOLO) & SUPABASE REAL-TIME LEADERBOARD
     // ============================================================
     window.isRankMode = false;
     window.rankCurrentScore = 0;
+    window.currentRankSessionId = null;
     let rankLastPipeX = 420;
     let rankNextPipeIdx = 1;
+    let isSubmittingRankScore = false;
 
     const MOCK_RANK_DB_KEY = "FLAPPY_RANK_MOCK_LEADERBOARD";
 
-    function getRankLeaderboard() {
+    // Fetch and display authoritative Supabase Leaderboard
+    async function fetchAndShowLeaderboard() {
+        showScreen("resultsView");
+        updateResultsHostState();
+
+        resultsMainHeader.textContent = "🏆 SUPABASE LEADERBOARD";
+        resultsSubHeader.style.display = "block";
+        resultsSubHeader.innerHTML = `<span style="color: #f7d51d;">HALL OF FAME • TOP 10 PLAYERS</span>`;
+
+        leaderboardHead.innerHTML = `
+            <tr>
+                <th>RANK</th>
+                <th>PLAYER</th>
+                <th>SCORE</th>
+                <th>DATE</th>
+            </tr>
+        `;
+
+        leaderboardBody.innerHTML = `
+            <tr>
+                <td colspan="4" style="padding: 16px; color: #8cb8ff; text-align: center;">
+                    <span style="font-size: 14px;">⏳</span> Loading rankings from Supabase...
+                </td>
+            </tr>
+        `;
+
+        btnPlayAgain.textContent = "PLAY RANK";
+        btnPlayAgain.style.display = "block";
+        btnReturnToLobby.style.display = "none";
+        waitingHostText.style.display = "none";
+        btnResultsExitMenu.style.display = "block";
+
+        try {
+            // First attempt: fetch via REST API
+            const response = await fetch("/api/leaderboard?limit=10");
+            const data = await response.json();
+            if (data && data.success && Array.isArray(data.leaderboard)) {
+                renderRankLeaderboardData(data.leaderboard, null, data.isSupabaseConnected);
+            } else {
+                leaderboardBody.innerHTML = `<tr><td colspan="4" style="color: #d9534f; padding: 12px;">Failed to load leaderboard.</td></tr>`;
+            }
+        } catch (err) {
+            console.warn("[Leaderboard] REST fetch failed, attempting WebSocket fallback:", err);
+            sendWs("get_rank_leaderboard", { limit: 10 });
+        }
+    }
+
+    function renderRankLeaderboardData(leaderboard, newEntry = null) {
+        leaderboardHead.innerHTML = `
+            <tr>
+                <th>RANK</th>
+                <th>PLAYER</th>
+                <th>SCORE</th>
+                <th>DATE</th>
+            </tr>
+        `;
+
+        leaderboardBody.innerHTML = "";
+        if (!leaderboard || leaderboard.length === 0) {
+            leaderboardBody.innerHTML = `<tr><td colspan="4" style="padding: 12px; text-align: center;">No records found yet!</td></tr>`;
+            return;
+        }
+
+        for (let i = 0; i < leaderboard.length; i++) {
+            const entry = leaderboard[i];
+            const rankNum = entry.rank || (i + 1);
+            let rankMedal = `#${rankNum}`;
+            if (rankNum === 1) rankMedal = "🥇 #1";
+            else if (rankNum === 2) rankMedal = "🥈 #2";
+            else if (rankNum === 3) rankMedal = "🥉 #3";
+
+            const isCurrent = newEntry && (
+                (newEntry.id && entry.id && entry.id === newEntry.id) ||
+                (newEntry.name && entry.name === newEntry.name && entry.score === newEntry.score)
+            );
+
+            const tr = document.createElement("tr");
+            if (isCurrent) {
+                tr.className = "current-player-rank-row";
+            }
+
+            const formattedDate = entry.date || (entry.createdAt ? entry.createdAt.split("T")[0] : "-");
+
+            tr.innerHTML = `
+                <td><strong style="color: ${rankNum <= 3 ? '#f7d51d' : '#000'};">${rankMedal}</strong></td>
+                <td><strong>${escapeHtml(entry.name)}</strong>${isCurrent ? ' <span class="badge badge-ready">YOU</span>' : ''}</td>
+                <td><span style="color: #55b02e; font-weight: bold;">${entry.score}</span></td>
+                <td style="font-size: 8px; color: #555;">${formattedDate}</td>
+            `;
+            leaderboardBody.appendChild(tr);
+        }
+    }
+
+    // Local resilience store (used only if server connection is completely lost)
+    function recordRankScoreLocal(playerName, score) {
+        let list = [];
         try {
             const stored = localStorage.getItem(MOCK_RANK_DB_KEY);
-            if (stored) {
-                const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-            }
-        } catch (e) {
-            console.warn("[Rank DB] Error reading leaderboard from localStorage:", e);
-        }
+            if (stored) list = JSON.parse(stored);
+        } catch (e) {}
 
-        const defaultLeaderboard = [
-            { name: "SkyKing", score: 48, date: "2026-10-12" },
-            { name: "AceFlapper", score: 36, date: "2026-10-13" },
-            { name: "PixelBird", score: 27, date: "2026-10-14" },
-            { name: "WingMaster", score: 19, date: "2026-10-11" },
-            { name: "FeatherPro", score: 14, date: "2026-10-14" },
-            { name: "CloudRider", score: 10, date: "2026-10-10" },
-            { name: "BreezeFlyer", score: 6, date: "2026-10-13" },
-            { name: "ChirpChampion", score: 4, date: "2026-10-12" }
-        ];
-        saveRankLeaderboard(defaultLeaderboard);
-        return defaultLeaderboard;
-    }
-
-    function saveRankLeaderboard(list) {
-        try {
-            localStorage.setItem(MOCK_RANK_DB_KEY, JSON.stringify(list));
-        } catch (e) {
-            console.warn("[Rank DB] Error saving leaderboard to localStorage:", e);
-        }
-    }
-
-    function recordRankScore(playerName, score) {
-        const list = getRankLeaderboard();
-        const cleanName = (playerName || "Anonymous").trim().slice(0, 12);
+        const cleanName = (playerName || "FlappyHero").trim().slice(0, 16);
         const newEntry = {
+            id: "local-" + Date.now(),
             name: cleanName,
             score: Number(score) || 0,
             date: new Date().toISOString().split("T")[0],
@@ -612,11 +688,11 @@ document.addEventListener("DOMContentLoaded", () => {
         };
         list.push(newEntry);
         list.sort((a, b) => b.score - a.score || a.date.localeCompare(b.date));
-
-        // Find rank of new entry
         const playerRank = list.findIndex(e => e === newEntry) + 1;
-        const trimmed = list.slice(0, 30);
-        saveRankLeaderboard(trimmed);
+        const trimmed = list.slice(0, 10);
+        try {
+            localStorage.setItem(MOCK_RANK_DB_KEY, JSON.stringify(trimmed));
+        } catch (e) {}
 
         return { leaderboard: trimmed, playerRank, newEntry };
     }
@@ -746,8 +822,24 @@ document.addEventListener("DOMContentLoaded", () => {
     function startRankMode() {
         window.isRankMode = true;
         window.rankCurrentScore = 0;
+        window.currentRankSessionId = null;
+        isSubmittingRankScore = false;
         rankLastPipeX = 420;
         rankNextPipeIdx = 1;
+
+        const currentName = (nameInput && nameInput.value) ? nameInput.value.trim() : "FlappyHero";
+
+        // Authoritative Server Session: Notify backend of rank session start
+        sendWs("start_rank_session", { playerName: currentName });
+        fetch("/api/rank/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ playerName: currentName })
+        }).then(r => r.json()).then(res => {
+            if (res && res.session && !window.currentRankSessionId) {
+                window.currentRankSessionId = res.session.sessionId;
+            }
+        }).catch(() => {});
 
         audioManager.playBGM();
 
@@ -782,59 +874,105 @@ document.addEventListener("DOMContentLoaded", () => {
         audioManager.playSFX("die");
         renderer.triggerDeathEffect(physics.predictedState.x, physics.predictedState.y, true, "GAME OVER");
 
-        const currentName = (nameInput && nameInput.value) ? nameInput.value.trim() : "FlappyHero";
-        const result = recordRankScore(currentName, window.rankCurrentScore || 0);
+        if (isSubmittingRankScore) return;
+        isSubmittingRankScore = true;
 
+        const currentName = (nameInput && nameInput.value) ? nameInput.value.trim() : "FlappyHero";
+        const finalScore = window.rankCurrentScore || 0;
+
+        // Show immediate transition to results screen with saving indicator
         setTimeout(() => {
-            showRankResultsUI(result);
-        }, 500);
+            showRankResultsUI({
+                isLoading: true,
+                playerRank: "...",
+                leaderboard: []
+            });
+        }, 400);
+
+        let resolved = false;
+
+        // 1. Authoritative submission directly to backend server (Server -> Supabase)
+        const wsSent = sendWs("rank_game_over", {
+            sessionId: window.currentRankSessionId,
+            score: finalScore,
+            playerName: currentName
+        });
+
+        // 2. Parallel / Fallback REST API call
+        const submitViaApi = () => {
+            fetch("/api/rank/game-over", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    sessionId: window.currentRankSessionId,
+                    score: finalScore,
+                    playerName: currentName
+                })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (!resolved && result && result.success) {
+                    resolved = true;
+                    showRankResultsUI(result);
+                }
+            })
+            .catch(err => {
+                console.error("[Rank Mode] API submit error:", err);
+                if (!resolved) {
+                    resolved = true;
+                    const fallback = recordRankScoreLocal(currentName, finalScore);
+                    showRankResultsUI(fallback);
+                }
+            });
+        };
+
+        if (!wsSent) {
+            submitViaApi();
+        } else {
+            // Safety timeout: if WebSocket response takes too long, call API fallback
+            setTimeout(() => {
+                if (!resolved) submitViaApi();
+            }, 1200);
+        }
     }
 
     function showRankResultsUI(result) {
         showScreen("resultsView");
         updateResultsHostState();
 
+        const currentScore = window.rankCurrentScore || 0;
+        const playerRankText = result.isLoading ? "..." : (result.playerRank ? `#${result.playerRank}` : "-");
+
         resultsMainHeader.textContent = "🏆 RANK MODE (SOLO)";
         resultsSubHeader.style.display = "block";
-        resultsSubHeader.innerHTML = `YOUR SCORE: <strong style="color: #55b02e; font-size: 14px;">${window.rankCurrentScore || 0}</strong> | RANK: <strong style="color: #f7d51d; font-size: 14px;">#${result.playerRank}</strong>`;
+        resultsSubHeader.innerHTML = `YOUR SCORE: <strong style="color: #55b02e; font-size: 14px;">${currentScore}</strong> | RANK: <strong style="color: #f7d51d; font-size: 14px;">${playerRankText}</strong>`;
 
-        leaderboardHead.innerHTML = `
-            <tr>
-                <th>RANK</th>
-                <th>PLAYER</th>
-                <th>SCORE</th>
-            </tr>
-        `;
-
-        leaderboardBody.innerHTML = "";
-        for (let i = 0; i < result.leaderboard.length; i++) {
-            const entry = result.leaderboard[i];
-            const rankNum = i + 1;
-            let rankMedal = `#${rankNum}`;
-            if (rankNum === 1) rankMedal = "🥇 #1";
-            else if (rankNum === 2) rankMedal = "🥈 #2";
-            else if (rankNum === 3) rankMedal = "🥉 #3";
-
-            const isCurrent = (entry === result.newEntry) || 
-                              (entry.timestamp && result.newEntry && entry.timestamp === result.newEntry.timestamp);
-
-            const tr = document.createElement("tr");
-            if (isCurrent) {
-                tr.className = "current-player-rank-row";
-            }
-
-            tr.innerHTML = `
-                <td><strong style="color: ${rankNum <= 3 ? '#f7d51d' : '#000'};">${rankMedal}</strong></td>
-                <td><strong>${escapeHtml(entry.name)}</strong>${isCurrent ? ' <span class="badge badge-ready">YOU</span>' : ''}</td>
-                <td><span style="color: #55b02e; font-weight: bold;">${entry.score}</span></td>
-            `;
-            leaderboardBody.appendChild(tr);
-        }
-
+        btnPlayAgain.textContent = "PLAY AGAIN";
         btnPlayAgain.style.display = "block";
         btnReturnToLobby.style.display = "none";
         waitingHostText.style.display = "none";
         btnResultsExitMenu.style.display = "block";
+
+        if (result.isLoading) {
+            leaderboardHead.innerHTML = `
+                <tr>
+                    <th>RANK</th>
+                    <th>PLAYER</th>
+                    <th>SCORE</th>
+                    <th>DATE</th>
+                </tr>
+            `;
+            leaderboardBody.innerHTML = `
+                <tr>
+                    <td colspan="4" style="padding: 16px; color: #8cb8ff; text-align: center;">
+                        <span style="font-size: 14px;">⚡</span> Submitting score to Supabase...
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        renderRankLeaderboardData(result.leaderboard, result.newEntry);
     }
 
     // Create & Join Lobby Actions
@@ -950,7 +1088,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Post-Match Controls
     btnPlayAgain.addEventListener("click", () => {
-        if (window.isRankMode) {
+        if (window.isRankMode || (resultsMainHeader && (resultsMainHeader.textContent.includes("LEADERBOARD") || resultsMainHeader.textContent.includes("RANK")))) {
             startRankMode();
             return;
         }
@@ -1931,6 +2069,31 @@ document.addEventListener("DOMContentLoaded", () => {
                 currentLobby = data.lobby;
                 updateLobbyUI();
                 showScreen("lobbyRoom");
+                break;
+            }
+
+            // ============================================================
+            // SUPABASE AUTHORITATIVE RANK MODE & LEADERBOARD RESPONSES
+            // ============================================================
+            case "rank_session_started": {
+                if (data && data.sessionId) {
+                    window.currentRankSessionId = data.sessionId;
+                    console.log("[Rank Mode] Authoritative session started:", data.sessionId);
+                }
+                break;
+            }
+
+            case "rank_game_over_result": {
+                console.log("[Rank Mode] Verified results from Supabase:", data);
+                if (window.isRankMode || !currentLobby) {
+                    showRankResultsUI(data);
+                }
+                break;
+            }
+
+            case "rank_leaderboard_data": {
+                console.log("[Rank Mode] Received leaderboard data from Supabase:", data);
+                renderRankLeaderboardData(data.leaderboard);
                 break;
             }
 

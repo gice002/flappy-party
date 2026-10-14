@@ -4,6 +4,8 @@ const http = require("http");
 const path = require("path");
 const { WebSocketServer } = require("ws");
 const LobbyManager = require("./game/lobbyManager");
+const rankManager = require("./game/rankManager");
+const supabaseLeaderboard = require("./services/supabaseClient");
 const initSocketHandler = require("./sockets/socketHandler");
 
 const app = express();
@@ -32,17 +34,67 @@ app.use((req, res, next) => {
     next();
 });
 
+// Parse JSON request bodies
+app.use(express.json());
+
 // Serve client static files
 app.use(express.static(path.join(__dirname, "../client")));
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-    res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+    res.status(200).json({
+        status: "ok",
+        supabase: supabaseLeaderboard.isConfigured ? "connected" : "fallback_mode",
+        timestamp: new Date().toISOString()
+    });
+});
+
+// ====================================================================
+// REST API ENDPOINTS FOR SUPABASE LEADERBOARD & RANK MODE
+// ====================================================================
+
+// GET /api/leaderboard - Fetch Top 10 rankings from Supabase
+app.get("/api/leaderboard", async (req, res) => {
+    try {
+        const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
+        const leaderboard = await rankManager.getLeaderboard(limit);
+        res.status(200).json({
+            success: true,
+            leaderboard,
+            isSupabaseConnected: supabaseLeaderboard.isConfigured
+        });
+    } catch (err) {
+        console.error("[API] Error fetching leaderboard:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/rank/start - Start an authoritative solo rank session
+app.post("/api/rank/start", (req, res) => {
+    try {
+        const { playerName } = req.body || {};
+        const session = rankManager.startSession(null, playerName);
+        res.status(200).json({ success: true, session });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/rank/game-over - Authoritative submission on game over (Server -> Supabase)
+app.post("/api/rank/game-over", async (req, res) => {
+    try {
+        const { sessionId, score, playerName } = req.body || {};
+        const result = await rankManager.handleGameOver(null, { sessionId, score, playerName });
+        res.status(200).json(result);
+    } catch (err) {
+        console.error("[API] Error recording rank game over:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 // Instantiate Lobby Manager & WebSocket Handlers
 const lobbyManager = new LobbyManager(clients);
-initSocketHandler(wss, clients, lobbyManager);
+initSocketHandler(wss, clients, lobbyManager, rankManager);
 
 function startServer(portToUse) {
     server.removeAllListeners("error");
@@ -59,6 +111,7 @@ function startServer(portToUse) {
         console.log(`====================================================`);
         console.log(` Flappy Bird Multiplayer Server running on port ${portToUse}`);
         console.log(` Environment: ${process.env.NODE_ENV || "development"}`);
+        console.log(` Supabase DB: ${supabaseLeaderboard.isConfigured ? "Connected (Real DB)" : "Fallback (In-Memory Mock)"}`);
         console.log(` WebSocket: Native (ws) enabled`);
         console.log(` Open http://localhost:${portToUse} in your browser.`);
         console.log(`====================================================`);

@@ -1,31 +1,31 @@
 # Real-Time Multiplayer Flappy Bird Architecture
 
-An authoritative, real-time multiplayer HTML5 Canvas game built with Node.js, Express, and native WebSockets (`ws`). Engineered with **Client-Side Prediction**, **Ping-Based Remote Player Interpolation**, **60 TPS Fixed Timestep Physics**, **7 Item Interactions**, and a decoupled **Vercel Edge Frontend + Cloudflare Tunnel Backend Architecture**.
+An authoritative, real-time multiplayer HTML5 Canvas game built with Node.js, Express, and native WebSockets (`ws`). Engineered with **Client-Side Prediction**, **Ping-Based Remote Player Interpolation**, **60 TPS Fixed Timestep Physics Engine**, **Knockdown & Recovery Mechanics**, **Chained Tether Constraint Physics**, **Instant Lucky Block Traps**, and a decoupled **Vercel Edge Frontend + Cloudflare Tunnel Backend Architecture**.
 
 ---
 
 ## 🚀 Quick Start Guide: Hosting a Game Session for Friends
 
-Whenever you want to host a game session for your friends from your laptop (e.g. Acer Nitro V15):
+Whenever you want to host a multiplayer session from your computer or server:
 
 ### Step 1: Start the Local Game Server (Terminal 1)
 ```bash
-cd /home/notsiri/projects/flappy-bird
+npm install
 npm start
 ```
-*(Confirms Node.js server running on port `3000`)*
+*(Server listens on `http://localhost:3000` with native WebSocket engine enabled)*
 
-### Step 2: Open the High-Speed Cloudflare Tunnel (Terminal 2)
+### Step 2: Open High-Speed Cloudflare Tunnel (Terminal 2)
 ```bash
 npx cloudflared tunnel --url http://localhost:3000
 ```
-*(Cloudflare connects to your nearest Bangkok `bkk07` edge node and outputs a live URL, e.g., `duration-republic-hey-duties.trycloudflare.com`)*
+*(Connects to the nearest Cloudflare edge node and generates a public URL, e.g., `https://xxxx.trycloudflare.com`)*
 
 ### Step 3: Share the Game Link with Friends
-Send your friends your Vercel URL with your Cloudflare server parameter attached:
+Send players the URL with your Cloudflare tunnel backend parameter attached:
 
-👉 **`https://flappy-blyat.vercel.app/?server=wss://xxxx.trycloudflare.com`**
-*(Replace `xxxx.trycloudflare.com` with your active Cloudflare URL from Terminal 2)*
+👉 **`https://flappy-blyat.vercel.app/?server=wss://xxxx.trycloudflare.com`**  
+*(Replace `xxxx.trycloudflare.com` with your active tunnel subdomain)*
 
 ---
 
@@ -41,55 +41,70 @@ Send your friends your Vercel URL with your Cloudflare server parameter attached
 | - client/assets/ (PNG, WAV, MP3)  |       | - server/game/lobbyManager.js      |
 +-----------------+-----------------+       +-----------------+------------------+
                   |                                           |
-                  | Fetches Static Assets (HTTP/2)             | WSS Connection
+                  | Fetches Static Assets (HTTP/2)            | WSS Connection
                   v                                           v (60 Hz Snapshots)
         +---------------------------------------------------------------+
         |                     Player Browser Client                     |
         |  - Client-Side Prediction (0ms Input Latency)                 |
         |  - Remote Player Linear Interpolation (Ping Smoothing)        |
         |  - Dynamic WebSocket Server Auto-Discovery                    |
+        |  - Mobile Portrait View with Touch Action HUD Controls        |
         +---------------------------------------------------------------+
 ```
 
 ---
 
-## ⚡ Key Technical Highlights
+## 🎮 Game Modes
 
-### 1. Zero-Latency Client-Side Prediction
-* **Instant Local Feedback**: Flap inputs (`Space`, `ArrowUp`, click) apply vertical impulse velocity (`velocityY = -6.0`) instantly on the local screen without waiting for network roundtrips.
-* **Input Queue & Reconciliation**: Local jump inputs are assigned incremental sequence IDs (`seq`) and transmitted to the backend over WebSockets. Incoming authoritative server snapshots reconcile position deviations while replaying unacknowledged inputs.
+### 1. 🏆 Play Rank (Classic Solo Mode) & Supabase Leaderboard
+* **Single-Player Endless Survival**: Classic Flappy Bird gameplay with procedural pipes generated infinitely.
+* **Authoritative Supabase Leaderboard**: When the game ends, the score is sent to the backend server directly, which authoritatively writes to a PostgreSQL database on **Supabase** via `@supabase/supabase-js`.
+* **Anti-Cheat Physical Sanity Verification**: The backend tracks active rank sessions (`rankManager.js`) and calculates the physical time bounds based on horizontal forward velocity ($160\text{px/s}$) and pipe distance ($220\text{px}$). Impossible spoofed scores are automatically detected and clamped.
+* **Hall of Fame (Top 10 Rankings)**: Real-time leaderboard view with player rank medals (🥇 #1, 🥈 #2, 🥉 #3), player names, scores, and timestamps.
+* **Graceful In-Memory Fallback**: If Supabase credentials are not set in `.env`, the server automatically runs an in-memory fallback store with zero downtime and seamless functionality.
 
-### 2. Ping-Based Remote Player Interpolation (Lerp & Dead-Reckoning)
-* **Smooth Gliding Movement**: Remote player positions interpolate frame-by-frame (`lerpFactor = 0.25`) with forward dead-reckoning.
-* **Jitter & Lag Absorption**: Network ping spikes manifest as smooth gliding rather than jarring local screen rubber-banding.
+### 2. 🏁 Flappy Race (Multiplayer PvP)
+* **Competitive Speed Race**: 2 to 4 players compete across procedural multi-map themes (e.g. Classic Day, Neon Night, Sunset Dusk, Underwater Realm, Volcano Inferno, Candyland, Snowy Tundra, Desert Dunes).
+* **Knockdown & Recovery System**: Hitting a pipe knocks the bird down to the ground for 5 seconds with spinning dizzy stars and impact dust. Once ready, tapping flap launches the bird back into the race with a **4-second invincibility shield** (`#55b02e` green aura).
+* **Lucky Blocks & Inventory**: Collect Lucky Block boxes placed in gaps to store items in your inventory, activated manually with `F` (Desktop) or the on-screen action button.
 
-### 3. High-Precision Fixed Timestep Game Engine (60 TPS)
-* **Deterministic Physics Loop**: Uses `performance.now()` from `perf_hooks` with a fixed-size accumulator pattern (`1000 / 60` ms per tick).
-* **Spiral-of-Death Protection**: Clamps max frame time delta (250ms) to maintain stability during background pauses.
-
-### 4. Single-Pass WebSocket Broadcasts & 15s Heartbeat
-* **Single Serialization**: State snapshot JSON objects are pre-serialized once per broadcast call for all open native `ws` sockets (`readyState === 1`).
-* **15-Second Heartbeat**: Server sends 15s ping/pong keep-alive frames to prevent Cloudflare/Nginx proxy idle connection drops.
+### 3. ⛓️ Flappy Chained (Co-op / Tether Chaos)
+* **Dynamic Iron Chain Physics**: All birds are connected by an elastic chain constraint. The chain displays real-time catenary sag when loose, an amber line when taut, and crimson jitter with sparks when subjected to critical strain ($>110\text{px}$).
+* **Dash Burst (⚡ DASH)**: Players can trigger an explosive forward boost (`Shift` / `D` / `E` or mobile FAB) with neon afterimages, shockwaves, and a 3.5s live cooldown timer.
+* **Fallen Bird Mechanics (นกชนแล้วตกลงพื้น)**: When a bird hits a pipe, it falls to the ground in knockdown state. **The checkpoint system is removed entirely**; the fallen bird anchors the tether or slides along the ground with the flying partner until flapping to recover!
+* **Instant Forced Lucky Block Events**: Lucky blocks trigger chaotic effects **IMMEDIATELY** upon collision (no inventory holding):
+  * 🌀 **Chaos Position Swap (`swap`)**: Scrambles the physical coordinates of all active players, tangling the chain!
+  * 🪣 **Vision Blindness (`ink`)**: Shrouds partner's forward vision in dark radial fog.
+  * ❄️ **Ice Freeze (`ice`)**: Freezes partner mid-air into an anchor block for 2.5s.
+  * ⛓️ **Slowness Curse (`curse`)**: Reduces partner's speed to 65% for 6s, straining the tether.
+  * ⚡ **Turbo Boost (`speed`)**: Surges forward at 150% speed for 4s, dragging the partner along.
+  * 🛡️ **Barrier Shield (`shield`)**: Grants an energy shield blocking the next incoming hazard.
 
 ---
 
-## 🎮 Game Modes & Item System
+## 🎁 Power-Ups & Item Registry
 
-### Power-Ups & Debuffs (Flappy Race Mode)
+| Item | Effect | Activation | Icon Asset |
+|---|---|---|---|
+| **Lucky Block** | Mystery gold box spawning at pipe gaps; includes 3s anti-vertical-spam cooldown | Contact | `lucky_block.png` |
+| **Position Swap** | Swaps physical positions with opponent (Race) or scrambles all players (Chained) | Manual / Instant | `swap.png` |
+| **Vision Blindness** | Deep radial fog obscuring forward vision of upcoming pipes for 5s | Target / Partner | `bucket.png` |
+| **Absorption Shield** | Blocks one hostile debuff; grants 3s invincibility post-block | Collector | `Absorption_JE3_BE3.png` |
+| **Speed Boost** | Increases forward movement speed by 50% for 4s with cyan afterimages | Collector | `SpeedBoost.png` |
+| **Ice Freeze** | Freezes target mid-air into a solid ice block for 2.5s | Target / Partner | `ice.png` |
+| **Slowness Curse** | Reduces forward flight velocity by 35% for 6s | Target / Partner | `Slowness_JE4.png` |
+| **Death Note** | Strikes the 1st place opponent with knockdown impact and targeted overlay | Target (Race) | `DeathNote.webp` |
 
-| Item | Effect | Graphic Asset |
+---
+
+## ⌨️ Game Controls
+
+| Action | Desktop Controls | Mobile / Touch Controls |
 |---|---|---|
-| **Ink Bucket** | Covers 1st place player's screen with ink overlay & bucket head | `bucket.png` / `inbucket.png` |
-| **Curse (Slowness)** | Reduces target's forward speed by 35% for 6s | `Slowness_JE4.png` |
-| **Shield Bubble** | Grants single-use protection against incoming attacks | `Absorption_JE3_BE3.png` |
-| **Speed Boost** | Increases forward movement speed by 50% for 4s | `SpeedBoost.png` |
-| **Position Swap** | Swaps physical positions with a random active opponent | `swap.png` |
-| **Death Note** | Instantly respawns 1st place player back to last checkpoint | `DeathNote.webp` |
-| **Ice Freeze** | Freezes target mid-air for 2.5s | `ice.png` |
-
-### Cooperative Mode: "Flappy Chained"
-* **Linked Kinematic Offsets**: 4 players fly in a chained formation with fixed horizontal offsets ($\Delta X = 60\text{px} \times \text{index}$).
-* **Synchronized Team Wipeouts**: If any player collides with a pipe, the entire team respawns at the latest cleared checkpoint simultaneously.
+| **Flap / Jump** | `Space` / `ArrowUp` / `KeyX` / Left Click | Tap anywhere on screen |
+| **Dash Burst (Chained)** | `Shift` / `KeyD` / `KeyE` | Tap `⚡ DASH` button |
+| **Use Item (Race)** | `KeyF` | Tap `ITEM` button |
+| **Leave Match** | `Esc` / Top-right `✕ LEAVE` button | Tap `✕ LEAVE` button |
 
 ---
 
@@ -98,43 +113,82 @@ Send your friends your Vercel URL with your Cloudflare server parameter attached
 ```
 flappy-bird/
 ├── client/
-│   ├── assets/                # Textures, backgrounds, pipes, sound assets, items
-│   │   ├── backgrounds/
-│   │   ├── hats/
-│   │   ├── items/
-│   │   └── pipes/
+│   ├── assets/                # Audio SFX/BGM, backgrounds, hats, pipes, items
+│   │   ├── backgrounds/       # Multi-theme map backdrops
+│   │   ├── hats/              # Custom cosmetics (Crown, Top Hat, Viking, Cap)
+│   │   ├── items/             # Lucky Block, Swap, Shield, Speed, Slowness, Ice, etc.
+│   │   └── pipes/             # Theme-matched top and bottom pipe pairs
 │   ├── config/
-│   │   └── assets.json        # Centralized asset configuration registry
+│   │   └── assets.json        # Centralized theme and asset registry
 │   ├── css/
-│   │   ├── style.css          # Pixel-art HUD, lobby, and leaderboard styling
-│   │   └── flappybird.css     # Canvas & HUD layout overlays
+│   │   ├── style.css          # Pixel-art HUD, portrait responsive FABs, lobby UI
+│   │   └── flappybird.css     # Game canvas container layouts
 │   ├── js/
-│   │   ├── app.js             # WebSocket client, UI event handlers, HUD, auto-reconnect
-│   │   ├── audio.js           # BGM / SFX audio controller
-│   │   ├── physics.js         # Client-side prediction & remote interpolation
-│   │   ├── renderer.js        # HTML5 Canvas renderer & parallax camera
-│   │   └── ui.js              # HUD layout and UI modal management
-│   └── index.html             # Application entry point
+│   │   ├── app.js             # UI router, WebSocket messaging, sound & action HUD
+│   │   ├── audio.js           # Multi-channel Web Audio SFX and BGM system
+│   │   ├── physics.js         # Client-side prediction, lerp interpolation & local tether
+│   │   ├── renderer.js        # Canvas visual effects, chain solver, afterimages, particles
+│   │   └── ui.js              # Lobby, customization, and settings modal manager
+│   └── index.html             # HTML5 Mobile Portrait View entry point
 ├── server/
 │   ├── config/
-│   │   └── constants.js       # Game physics, tick rates, and item constants
+│   │   └── constants.js       # Physics parameters, cooldowns, and duration constants
+│   ├── db/
+│   │   └── schema.sql         # Supabase PostgreSQL schema with table, index, RLS & seed
 │   ├── game/
-│   │   ├── gameLoop.js        # Authoritative 60 TPS high-precision fixed timestep loop
-│   │   ├── lobbyManager.js    # Lobby room lifecycle & broadcast manager
-│   │   └── mapGenerator.js    # Procedural map & pipe spacing generator
-│   ├── models/                # Player, Lobby, Leaderboard, Map, Checkpoint, Mode
+│   │   ├── gameLoop.js        # 60 TPS authoritative loop, knockdown & tether solver
+│   │   ├── lobbyManager.js    # Rooms, ready-checks, mode routing, match lifecycle
+│   │   ├── mapGenerator.js    # Procedural map themes, pipes & item box generator
+│   │   └── rankManager.js     # Authoritative rank sessions & anti-cheat validator
+│   ├── models/                # Player, Lobby, Leaderboard, Map, Checkpoint entities
+│   ├── services/
+│   │   └── supabaseClient.js  # Supabase client connector with fallback resilient cache
 │   ├── sockets/
-│   │   └── socketHandler.js   # Native WebSocket event router & 15s heartbeat
-│   └── server.js              # Express app, CORS middleware & WebSocket server
+│   │   └── socketHandler.js   # Native WebSocket dispatcher and 15s heartbeat
+│   └── server.js              # Express HTTP server, REST endpoints & WebSocket listener
+├── references/                # UI mockups, design specifications & archives
+├── scratch/                   # Automated unit test suites (100% test coverage)
+│   ├── test-supabase-leaderboard.js  # Supabase & authoritative rank mode test suite
+│   ├── test-chained-mode-upgrade.js  # Chained tether & instant items test suite
+│   ├── test-pickup-cooldown.js       # 3-second Lucky Block pickup cooldown test suite
+│   └── test-new-items.js             # Speed, Swap, Death Note, Ice tests
 ├── Dockerfile                 # Multi-stage production container setup
-├── fly.toml                   # Fly.io configuration template
+├── fly.toml                   # Fly.io deployment template
 ├── package.json               # Node.js dependencies and scripts
 ├── vercel.json                # Vercel static output configuration
-└── README.md                  # Project technical documentation
+└── README.md                  # Project documentation
 ```
 
 ---
 
-## 📄 License & Evaluation
+## 🗄️ Supabase Real Database Setup Guide
 
-Developed for University Network Programming & Distributed Systems course evaluation. All rights reserved.
+To connect the game to your real Supabase PostgreSQL database:
+
+### 1. Execute SQL Schema in Supabase
+1. Open your [Supabase Dashboard](https://supabase.com/dashboard) and select your project.
+2. Go to **SQL Editor** -> **New Query**.
+3. Copy the contents of [`server/db/schema.sql`](file:///home/notsiri/university/projects/network/flappy-bird/server/db/schema.sql) and click **Run**.
+4. This creates the `leaderboard` table, index on `(score DESC, created_at ASC)`, Row Level Security (RLS) policies, and initial Hall of Fame records.
+
+### 2. Configure Environment Variables
+In your local root `.env` file (or PaaS dashboard environment settings):
+```env
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-supabase-anon-or-service-role-key
+```
+
+### 3. REST API & WebSocket Events Reference
+* **`GET /api/leaderboard?limit=10`**: Returns Top 10 rankings directly from Supabase.
+* **`POST /api/rank/start`**: Creates an authoritative session token with server timestamp.
+* **`POST /api/rank/game-over`**: Validates session duration against physical limits and saves score directly to Supabase.
+* **WebSocket Events**:
+  * `start_rank_session` ➡️ `rank_session_started`
+  * `rank_game_over` ➡️ `rank_game_over_result`
+  * `get_rank_leaderboard` ➡️ `rank_leaderboard_data`
+
+---
+
+## 📄 Course Evaluation
+
+Developed for **University Network Programming & Distributed Systems** course evaluation. All rights reserved.
