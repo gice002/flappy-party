@@ -108,6 +108,7 @@ function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = nul
         });
 
         ws.on("message", async (message) => {
+            ws.isAlive = true;
             let parsed;
             try {
                 parsed = JSON.parse(message.toString());
@@ -325,8 +326,8 @@ function initSocketHandler(wss, clients, lobbyManager, rankManagerInstance = nul
             }
         });
 
-        ws.on("close", () => {
-            console.log(`[WebSocket] Client disconnected: ${ws.id}`);
+        ws.on("close", (code, reason) => {
+            console.log(`[WebSocket] Client disconnected: ${ws.id} (code: ${code}, reason: "${reason ? reason.toString() : ''}")`);
             rankManager.handleDisconnect(ws.id);
             lobbyManager.handleDisconnect(ws);
             if (clients) clients.delete(ws.id);

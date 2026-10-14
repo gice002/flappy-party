@@ -1,9 +1,8 @@
 const path = require("path");
 require("dotenv").config({
-    path: [
-        path.resolve(__dirname, "../.env"),
-        path.resolve(process.cwd(), ".env")
-    ]
+    path: path.resolve(__dirname, "../.env"),
+    override: true,
+    quiet: true
 });
 const express = require("express");
 const http = require("http");

@@ -47,6 +47,58 @@ document.addEventListener("DOMContentLoaded", () => {
     const pingTracker = (typeof PingTracker !== "undefined") ? new PingTracker() : null;
     const networkSimulator = (typeof NetworkSimulator !== "undefined") ? new NetworkSimulator() : null;
 
+    // Core Game State Variables (Declared early so all listeners/handlers have access without TDZ errors)
+    let currentLobby = null;
+    let localPlayerId = null;
+    let gameLoopRunning = false;
+    let animationFrameId = null;
+    let rankActiveSessionToken = 0;
+    let rankGameOverUiTimeout = null;
+    let rankApiFallbackTimeout = null;
+    let rankGameOverResolved = false;
+
+    // Adaptive Backend & WebSocket Host Resolution
+    const defaultProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const isFile = window.location.protocol === "file:" || !window.location.host;
+    const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || isFile;
+    let backendHost = window.location.host;
+    if (isFile) {
+        backendHost = "localhost:3000";
+    } else if (isLocalhost && window.location.port && window.location.port !== "3000") {
+        backendHost = `${window.location.hostname}:3000`;
+    }
+    const customBackend = window.SERVER_URL || (!isLocalhost && typeof localStorage !== "undefined" && localStorage.getItem("GAME_SERVER_URL"));
+    const wsUrl = customBackend ? customBackend : `${defaultProtocol}//${backendHost}`;
+
+    function getApiUrl(path) {
+        if (!isFile && (!isLocalhost || !window.location.port || window.location.port === "3000")) {
+            return path;
+        }
+        return `${window.location.protocol === "https:" ? "https:" : "http:"}//${backendHost}${path}`;
+    }
+
+    // Network Indicator UI updater (Dynamically checks DOM elements to prevent ReferenceError)
+    function updateNetworkIndicatorUI(status) {
+        if (!status) return;
+        const dot = document.getElementById("net-ping-dot");
+        const text = document.getElementById("net-ping-text");
+        const badge = document.getElementById("net-quality-badge");
+        if (dot) dot.style.backgroundColor = status.color || "#888";
+        if (text) text.textContent = `PING: ${status.rttText}`;
+        if (badge) {
+            badge.textContent = status.text;
+            badge.style.backgroundColor = (status.status === "GOOD") ? "#2b6313" : ((status.status === "FAIR") ? "#9c7c10" : ((status.status === "HIGH") ? "#962d2a" : "#444"));
+        }
+        const tipRtt = document.getElementById("net-tooltip-rtt");
+        const tipSrtt = document.getElementById("net-tooltip-srtt");
+        const tipMinmax = document.getElementById("net-tooltip-minmax");
+        const tipJitter = document.getElementById("net-tooltip-jitter");
+        if (tipRtt) tipRtt.textContent = status.rtt !== null ? `${status.rtt}ms` : "--";
+        if (tipSrtt) tipSrtt.textContent = status.srtt !== null ? `${status.srtt}ms` : "--";
+        if (tipMinmax) tipMinmax.textContent = (status.minRtt !== null && status.maxRtt !== null) ? `${status.minRtt}ms / ${status.maxRtt}ms` : "-- / --";
+        if (tipJitter) tipJitter.textContent = status.jitter !== null ? `±${status.jitter}ms` : "--";
+    }
+
     // Native WebSocket client initialization with Exponential Backoff Reconnection
     let ws = null;
     let reconnectAttempts = 0;
@@ -68,10 +120,6 @@ document.addEventListener("DOMContentLoaded", () => {
             ws = null;
         }
 
-        const defaultProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const customBackend = window.SERVER_URL || (typeof localStorage !== "undefined" && localStorage.getItem("GAME_SERVER_URL"));
-        const wsUrl = customBackend ? customBackend : `${defaultProtocol}//${window.location.host}`;
-        
         console.log(`[WebSocket] Connecting to backend: ${wsUrl}`);
         ws = new WebSocket(wsUrl);
         window.ws = ws;
@@ -359,6 +407,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const canvas = document.getElementById("gameCanvas");
     const physics = new PhysicsEngine();
     const renderer = new CanvasRenderer(canvas, physics);
+    window.physics = physics;
+    window.renderer = renderer;
 
     // Ground Impact Callback from Physics Engine (comic dust puff & audio feedback)
     window.onGroundImpact = (x, y, isLocal) => {
@@ -447,7 +497,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!overlay) return;
 
         const isBossMode = (currentLobby && currentLobby.mode_id === "flappy_boss") ||
-                           (renderer && renderer.modeId === "flappy_boss");
+                           (typeof renderer !== "undefined" && renderer && renderer.modeId === "flappy_boss");
         const screenGame = document.getElementById("screen-game");
         const isGameActive = screenGame && screenGame.classList.contains("active");
         const isPortrait = window.innerHeight > window.innerWidth;
@@ -465,15 +515,6 @@ document.addEventListener("DOMContentLoaded", () => {
     window.addEventListener("orientationchange", () => {
         setTimeout(applyResponsiveLayout, 100);
     });
-
-    let currentLobby = null;
-    let localPlayerId = null;
-    let gameLoopRunning = false;
-    let animationFrameId = null;
-    let rankActiveSessionToken = 0;
-    let rankGameOverUiTimeout = null;
-    let rankApiFallbackTimeout = null;
-    let rankGameOverResolved = false;
 
     const skins = ["Classic Yellow", "Ruby Red", "Emerald Green", "Ocean Blue", "Royal Purple"];
     const hats = ["None", "Golden Crown", "Top Hat", "Red Cap", "Viking Helmet"];
@@ -545,7 +586,7 @@ document.addEventListener("DOMContentLoaded", () => {
     async function fetchUserWallet(playerName) {
         const cleanName = (playerName || window.playerName || (nameInput && nameInput.value) || "FlappyHero").trim();
         try {
-            const res = await fetch(`/api/player/wallet?name=${encodeURIComponent(cleanName)}`);
+            const res = await fetch(getApiUrl(`/api/player/wallet?name=${encodeURIComponent(cleanName)}`));
             const data = await res.json();
             if (data && data.success) {
                 updateWalletUI(data.balance);
@@ -778,7 +819,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         setAuthAlert("");
 
-        const endpoint = authMode === "signup" ? "/api/auth/signup" : "/api/auth/signin";
+        const endpoint = authMode === "signup" ? getApiUrl("/api/auth/signup") : getApiUrl("/api/auth/signin");
         const payload = { username, password };
         if (authMode === "signup") {
             payload.playerName = playerName || username;
@@ -948,7 +989,7 @@ document.addEventListener("DOMContentLoaded", () => {
             btnBuyEquipHat.textContent = "Purchasing...";
 
             try {
-                const res = await fetch("/api/shop/buy-hat", {
+                const res = await fetch(getApiUrl("/api/shop/buy-hat"), {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -1079,7 +1120,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         try {
             // First attempt: fetch via REST API
-            const response = await fetch("/api/leaderboard?limit=10");
+            const response = await fetch(getApiUrl("/api/leaderboard?limit=10"));
             const data = await response.json();
             if (data && data.success && Array.isArray(data.leaderboard)) {
                 renderRankLeaderboardData(data.leaderboard, null, data.isSupabaseConnected);
@@ -1337,7 +1378,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Authoritative Server Session: Notify backend of rank session start
         sendWs("start_rank_session", { playerName: currentName });
         if (!ws || ws.readyState !== WebSocket.OPEN) {
-            fetch("/api/rank/start", {
+            fetch(getApiUrl("/api/rank/start"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ playerName: currentName })
@@ -1412,7 +1453,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // 2. REST API submission only as fallback if WS fails or times out
         const submitViaApi = () => {
             if (rankGameOverResolved || rankActiveSessionToken !== currentToken) return;
-            fetch("/api/rank/game-over", {
+            fetch(getApiUrl("/api/rank/game-over"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -1741,7 +1782,8 @@ document.addEventListener("DOMContentLoaded", () => {
             selectMode.value = currentLobby.mode_id;
             selectMaps.value = currentLobby.amount_of_map;
 
-            const canStart = (currentLobby.players.length >= 2) && allReady;
+            const minPlayers = (currentLobby.mode_id === "flappy_boss" || currentLobby.mode_id === "flappy_solo") ? 1 : 2;
+            const canStart = (currentLobby.players.length >= minPlayers) && allReady;
             btnStartMatch.disabled = !canStart;
             btnStartMatch.style.opacity = canStart ? "1" : "0.5";
         } else {
@@ -2113,6 +2155,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 window.currentBossState = null;
                 if (renderer) renderer.bossState = null;
                 currentLobby = data.lobby;
+                window.currentLobby = currentLobby;
+                if (physics) physics.modeId = currentLobby.mode_id;
                 showScreen("loadingScreen");
                 renderer.setGameData(data.maps, data.checkpoints, data.itemBoxes, data.finishLineX, currentLobby.mode_id);
 
@@ -2142,6 +2186,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             case "match_starting": {
                 currentLobby = data.lobby;
+                window.currentLobby = currentLobby;
+                if (physics) physics.modeId = currentLobby.mode_id;
                 showScreen("gameView");
 
                 renderer.setGameData(data.maps, data.checkpoints, data.itemBoxes, data.finishLineX, currentLobby.mode_id);
@@ -2157,6 +2203,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         myChainIdx = myPlayer.chain_index;
                     }
                 }
+                const chainedOffset = myChainIdx * 45;
                 let initialX = startX - chainedOffset;
                 if (currentLobby && currentLobby.mode_id === "flappy_boss") {
                     let myBossIdx = 0;
@@ -2967,19 +3014,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const netSimStatusText = document.getElementById("net-sim-status-text");
     const btnResetNetSim = document.getElementById("btn-reset-net-sim");
 
-    function updateNetworkIndicatorUI(status) {
-        if (!netPingDot || !status) return;
-        netPingDot.style.backgroundColor = status.color || "#888";
-        if (netPingText) netPingText.textContent = `PING: ${status.rttText}`;
-        if (netQualityBadge) {
-            netQualityBadge.textContent = status.text;
-            netQualityBadge.style.backgroundColor = (status.status === "GOOD") ? "#2b6313" : ((status.status === "FAIR") ? "#9c7c10" : ((status.status === "HIGH") ? "#962d2a" : "#444"));
-        }
-        if (netTooltipRtt) netTooltipRtt.textContent = status.rtt !== null ? `${status.rtt}ms` : "--";
-        if (netTooltipSrtt) netTooltipSrtt.textContent = status.srtt !== null ? `${status.srtt}ms` : "--";
-        if (netTooltipMinmax) netTooltipMinmax.textContent = (status.minRtt !== null && status.maxRtt !== null) ? `${status.minRtt}ms / ${status.maxRtt}ms` : "-- / --";
-        if (netTooltipJitter) netTooltipJitter.textContent = status.jitter !== null ? `±${status.jitter}ms` : "--";
-    }
 
     function updateSimulatorUI() {
         if (!netSimStatusText) return;
