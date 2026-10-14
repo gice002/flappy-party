@@ -1,5 +1,4 @@
 const { Pool } = require("pg");
-const { createClient } = require("@supabase/supabase-js");
 
 class SupabaseLeaderboardService {
     constructor() {
@@ -44,12 +43,13 @@ class SupabaseLeaderboardService {
             }
         }
 
-        // 2. Supabase REST API Client
+        // 2. Supabase REST API Client (Lazy-loaded fallback if keys provided)
         const isUrlValid = supabaseUrl.startsWith("http://") || supabaseUrl.startsWith("https://");
         const isKeyValid = supabaseKey && !supabaseKey.includes("your-supabase") && supabaseKey.length > 10;
 
         if (isUrlValid && isKeyValid) {
             try {
+                const { createClient } = require("@supabase/supabase-js");
                 this.supabaseClient = createClient(supabaseUrl, supabaseKey, {
                     auth: { persistSession: false }
                 });

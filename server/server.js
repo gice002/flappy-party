@@ -1,7 +1,12 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({
+    path: [
+        path.resolve(__dirname, "../.env"),
+        path.resolve(process.cwd(), ".env")
+    ]
+});
 const express = require("express");
 const http = require("http");
-const path = require("path");
 const { WebSocketServer } = require("ws");
 const LobbyManager = require("./game/lobbyManager");
 const rankManager = require("./game/rankManager");
