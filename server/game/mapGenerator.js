@@ -141,14 +141,16 @@ function generateMapsAndCheckpoints(amountOfMaps, lobbyId, modeId = "flappy_race
             }
         }
 
-        const checkpointObj = new Checkpoint(
-            checkpointId,
-            mapId,
-            respawnX,
-            respawnY,
-            pipeIndexCounter
-        );
-        checkpoints.set(checkpointId, checkpointObj);
+        if (modeId !== "flappy_chained") {
+            const checkpointObj = new Checkpoint(
+                checkpointId,
+                mapId,
+                respawnX,
+                respawnY,
+                pipeIndexCounter
+            );
+            checkpoints.set(checkpointId, checkpointObj);
+        }
 
         // Expand Zone spacing to PIPE_SPACING_X * 2 (760px) before next map
         currentX += pipeSpacingX * 2;

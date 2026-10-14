@@ -266,7 +266,7 @@ class PhysicsEngine {
         if (typeof window !== "undefined" && window.currentLobby && window.currentLobby.mode_id === "flappy_chained") {
             const localChainIdx = this.localChainIndex || 0;
             for (let remote of this.remotePlayers.values()) {
-                if (remote.is_finished || remote.isKnockedDown) continue;
+                if (remote.is_finished) continue;
                 const rIdx = remote.chain_index !== undefined ? remote.chain_index : 0;
                 if (Math.abs(rIdx - localChainIdx) === 1) {
                     const dx = remote.x - this.predictedState.x;

@@ -538,6 +538,11 @@ class LobbyManager {
         const lobby = this.lobbies.get(lobbyId);
         if (!lobby || lobby.status !== "playing") return;
 
+        if (lobby.mode_id === "flappy_chained") {
+            // Chained mode has no manual inventory item use - Lucky blocks are forced immediately upon contact!
+            return;
+        }
+
         const player = lobby.players.get(socketId);
         if (!player || !player.heldItem) return;
 

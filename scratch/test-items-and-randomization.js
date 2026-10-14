@@ -16,15 +16,13 @@ console.log("-> Map themes: Map 1 =", resultRace.maps[0].theme_id, ", Map 2 =", 
 // Test 2: Item Spawning Constraints & Risk/Reward Offset
 console.log("Test 2: Item Spawning Constraints & Risk/Reward Offset");
 const resultChained = generateMapsAndCheckpoints(3, "LOBBY2", "flappy_chained");
-assert.strictEqual(resultChained.itemBoxes.length, 0, "No items should spawn in flappy_chained mode");
+assert.ok(resultChained.itemBoxes.length > 0, "Items should spawn in flappy_chained mode");
 
 assert.ok(resultRace.itemBoxes.length > 0, "Items should spawn in flappy_race mode");
 for (let item of resultRace.itemBoxes) {
-    // Check that item Y is NOT dead center (center would be topY + 512 + gap/2 - 16)
-    // In risk/reward, Y is offset near top rim or bottom rim
     assert.ok(item.y > 0, "Item Y must be valid number");
 }
-console.log(`-> Generated ${resultRace.itemBoxes.length} item boxes in Flappy Race, 0 in Flappy Chained`);
+console.log(`-> Generated ${resultRace.itemBoxes.length} item boxes in Flappy Race, ${resultChained.itemBoxes.length} in Flappy Chained`);
 
 // Test 3: Player Entity Inventory & Shield State
 console.log("Test 3: Player Inventory & Shield Entity State");

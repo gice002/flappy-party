@@ -1113,6 +1113,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateInventoryUI(itemType) {
         if (!hudInventory) return;
+        if (currentLobby && currentLobby.mode_id === "flappy_chained") {
+            hudInventory.style.display = "none";
+            return;
+        }
         hudInventory.style.display = "flex";
 
         const now = Date.now();
@@ -1207,6 +1211,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function handleUseItemInput() {
+        if (currentLobby && currentLobby.mode_id === "flappy_chained") return;
         if (gameLoopRunning && physics.localHeldItem) {
             sendWs("use_item");
         }
@@ -1450,6 +1455,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 physics.resetLocalState(startX - chainedOffset, startY);
                 window.localItemPickupCooldownUntil = null;
                 physics.isFrozen = true;
+
+                if (currentLobby && currentLobby.mode_id === "flappy_chained") {
+                    if (hudInventory) hudInventory.style.display = "none";
+                    if (hudDash) hudDash.style.display = "flex";
+                } else if (currentLobby && currentLobby.mode_id === "flappy_race") {
+                    if (hudInventory) hudInventory.style.display = "flex";
+                    if (hudDash) hudDash.style.display = "none";
+                } else {
+                    if (hudInventory) hudInventory.style.display = "none";
+                    if (hudDash) hudDash.style.display = "none";
+                }
+
                 startGameLoop();
 
                 let count = data.countdownSeconds || 3;
@@ -1502,10 +1519,14 @@ document.addEventListener("DOMContentLoaded", () => {
             case "item_collected": {
                 audioManager.playSFX("point");
                 if (data.playerId === localPlayerId) {
-                    physics.localHeldItem = data.acquiredItem || null;
+                    if (!data.instant && (!currentLobby || currentLobby.mode_id !== "flappy_chained")) {
+                        physics.localHeldItem = data.acquiredItem || null;
+                    } else {
+                        physics.localHeldItem = null;
+                    }
                     window.localItemPickupCooldownUntil = data.pickupCooldownUntil || (Date.now() + 3000);
                     physics.localItemPickupCooldownUntil = window.localItemPickupCooldownUntil;
-                    updateInventoryUI(data.acquiredItem);
+                    updateInventoryUI(physics.localHeldItem);
                 }
                 if (renderer && renderer.itemBoxes) {
                     const targetBox = renderer.itemBoxes.find(b => b.id === data.itemId);
@@ -1613,13 +1634,13 @@ document.addEventListener("DOMContentLoaded", () => {
                         const userStr = `<span style="color: #f7d51d;">${escapeHtml(data.userName)}</span>`;
                         const targetStr = `<span style="color: #ffffff;">${escapeHtml(data.targetName || "Target")}</span>`;
 
-                        if (data.itemType === "speed") {
-                            addActivityFeedLog(`${userStr} activated <span style="color: #55b02e;">SPEED BOOST</span>`);
-                        } else if (data.itemType === "shield") {
-                            addActivityFeedLog(`${userStr} activated <span style="color: #3993d0;">SHIELD</span>`);
-                        } else if (data.itemType === "swap") {
-                            if (data.isChaosSwap) {
-                                addActivityFeedLog(`${userStr} triggered <span style="color: #ff007f; font-weight: bold;">CHAOS POSITION SWAP!</span> 🌀`);
+                        if (data.instant) {
+                            if (data.itemType === "speed") {
+                                addActivityFeedLog(`🎲 ${userStr} hit Lucky Block: <span style="color: #55b02e; font-weight: bold;">TURBO BOOST!</span> ⚡`);
+                            } else if (data.itemType === "shield") {
+                                addActivityFeedLog(`🎲 ${userStr} hit Lucky Block: <span style="color: #3993d0; font-weight: bold;">SHIELD BARRIER!</span> 🛡️`);
+                            } else if (data.itemType === "swap") {
+                                addActivityFeedLog(`🎲 ${userStr} hit Lucky Block: <span style="color: #ff007f; font-weight: bold;">CHAOS POSITION SWAP!</span> 🌀`);
                                 audioManager.playSFX("swooshing");
                                 if (renderer && typeof renderer.triggerChaosSwapEffect === "function") {
                                     renderer.triggerChaosSwapEffect(data.swappedPlayers);
@@ -1633,63 +1654,97 @@ document.addEventListener("DOMContentLoaded", () => {
                                         physics.pendingInputs = [];
                                     }
                                 }
-                            } else {
-                                addActivityFeedLog(`${userStr} <span style="color: #f7d51d;">SWAPPED</span> position with ${targetStr}`);
-                                if (renderer && typeof renderer.triggerSwapEffect === "function") {
-                                    let uX = 0, uY = 0, tX = 0, tY = 0;
-                                    if (data.userId === localPlayerId) {
-                                        uX = physics.predictedState.x;
-                                        uY = physics.predictedState.y;
-                                    } else if (physics.remotePlayers.has(data.userId)) {
-                                        const rp = physics.remotePlayers.get(data.userId);
-                                        uX = rp.x;
-                                        uY = rp.y;
+                            } else if (data.itemType === "ink") {
+                                addActivityFeedLog(`🎲 ${userStr} hit Lucky Block: <span style="color: #e07629; font-weight: bold;">BUCKET HEAD</span> on ${targetStr}! 🪣`);
+                                if (data.targetId === localPlayerId) {
+                                    window.localInkUntil = Date.now() + (data.duration || 5000);
+                                    audioManager.playSFX("swooshing");
+                                }
+                            } else if (data.itemType === "curse") {
+                                addActivityFeedLog(`🎲 ${userStr} hit Lucky Block: <span style="color: #d9534f; font-weight: bold;">CURSED</span> ${targetStr} [SLOW]! ⛓️`);
+                                if (data.targetId === localPlayerId) audioManager.playSFX("hit");
+                            } else if (data.itemType === "ice") {
+                                addActivityFeedLog(`🎲 ${userStr} hit Lucky Block: <span style="color: #70c5ce; font-weight: bold;">FROZE</span> ${targetStr} in ICE! ❄️`);
+                            }
+                        } else {
+                            if (data.itemType === "speed") {
+                                addActivityFeedLog(`${userStr} activated <span style="color: #55b02e;">SPEED BOOST</span>`);
+                            } else if (data.itemType === "shield") {
+                                addActivityFeedLog(`${userStr} activated <span style="color: #3993d0;">SHIELD</span>`);
+                            } else if (data.itemType === "swap") {
+                                if (data.isChaosSwap) {
+                                    addActivityFeedLog(`${userStr} triggered <span style="color: #ff007f; font-weight: bold;">CHAOS POSITION SWAP!</span> 🌀`);
+                                    audioManager.playSFX("swooshing");
+                                    if (renderer && typeof renderer.triggerChaosSwapEffect === "function") {
+                                        renderer.triggerChaosSwapEffect(data.swappedPlayers);
                                     }
-                                    if (data.targetId === localPlayerId) {
-                                        tX = physics.predictedState.x;
-                                        tY = physics.predictedState.y;
+                                    if (data.swappedPlayers) {
+                                        const mySwap = data.swappedPlayers.find(sp => sp.playerId === localPlayerId);
+                                        if (mySwap) {
+                                            physics.predictedState.x = mySwap.x;
+                                            physics.predictedState.y = mySwap.y;
+                                            physics.predictedState.velocityY = 0;
+                                            physics.pendingInputs = [];
+                                        }
+                                    }
+                                } else {
+                                    addActivityFeedLog(`${userStr} <span style="color: #f7d51d;">SWAPPED</span> position with ${targetStr}`);
+                                    if (renderer && typeof renderer.triggerSwapEffect === "function") {
+                                        let uX = 0, uY = 0, tX = 0, tY = 0;
+                                        if (data.userId === localPlayerId) {
+                                            uX = physics.predictedState.x;
+                                            uY = physics.predictedState.y;
+                                        } else if (physics.remotePlayers.has(data.userId)) {
+                                            const rp = physics.remotePlayers.get(data.userId);
+                                            uX = rp.x;
+                                            uY = rp.y;
+                                        }
+                                        if (data.targetId === localPlayerId) {
+                                            tX = physics.predictedState.x;
+                                            tY = physics.predictedState.y;
+                                        } else if (physics.remotePlayers.has(data.targetId)) {
+                                            const rp = physics.remotePlayers.get(data.targetId);
+                                            tX = rp.x;
+                                            tY = rp.y;
+                                        }
+                                        renderer.triggerSwapEffect(uX, uY, tX, tY, data.userName, data.targetName);
+                                    }
+                                }
+                            } else if (data.itemType === "ink") {
+                                addActivityFeedLog(`${userStr} used <span style="color: #e07629;">BUCKET</span> on ${targetStr}`);
+                                if (data.targetId === localPlayerId) {
+                                    window.localInkUntil = Date.now() + (data.duration || 5000);
+                                    audioManager.playSFX("swooshing");
+                                }
+                            } else if (data.itemType === "curse") {
+                                addActivityFeedLog(`${userStr} CURSED ${targetStr} <span style="color: #d9534f;">[SLOW]</span>`);
+                                if (data.targetId === localPlayerId) audioManager.playSFX("hit");
+                            } else if (data.itemType === "deathnote") {
+                                addActivityFeedLog(`${userStr} used <span style="color: #d9534f;">DEATH NOTE</span> on ${targetStr}`);
+                                if (data.userId === localPlayerId) {
+                                    // Attacker who used Death Note does NOT get any screen overlay
+                                    window.deathnoteEffectUntil = 0;
+                                    window.deathnoteBannerText = "";
+                                    window.deathnoteSubText = "";
+                                }
+                                if (renderer && typeof renderer.triggerDeathEffect === "function") {
+                                    let targetX = 0, targetY = 0;
+                                    const isLocalTarget = (data.targetId === localPlayerId);
+                                    if (isLocalTarget) {
+                                        targetX = physics.predictedState.x;
+                                        targetY = physics.predictedState.y;
                                     } else if (physics.remotePlayers.has(data.targetId)) {
                                         const rp = physics.remotePlayers.get(data.targetId);
-                                        tX = rp.x;
-                                        tY = rp.y;
+                                        targetX = rp.x;
+                                        targetY = rp.y;
                                     }
-                                    renderer.triggerSwapEffect(uX, uY, tX, tY, data.userName, data.targetName);
+                                    if (targetX || targetY) {
+                                        renderer.triggerDeathEffect(targetX, targetY, isLocalTarget, "DEATH NOTE!");
+                                    }
                                 }
+                            } else if (data.itemType === "ice") {
+                                addActivityFeedLog(`${userStr} <span style="color: #70c5ce;">FROZE</span> ${targetStr} in ICE`);
                             }
-                        } else if (data.itemType === "ink") {
-                            addActivityFeedLog(`${userStr} used <span style="color: #e07629;">BUCKET</span> on ${targetStr}`);
-                            if (data.targetId === localPlayerId) {
-                                window.localInkUntil = Date.now() + (data.duration || 5000);
-                                audioManager.playSFX("swooshing");
-                            }
-                        } else if (data.itemType === "curse") {
-                            addActivityFeedLog(`${userStr} CURSED ${targetStr} <span style="color: #d9534f;">[SLOW]</span>`);
-                            if (data.targetId === localPlayerId) audioManager.playSFX("hit");
-                        } else if (data.itemType === "deathnote") {
-                            addActivityFeedLog(`${userStr} used <span style="color: #d9534f;">DEATH NOTE</span> on ${targetStr}`);
-                            if (data.userId === localPlayerId) {
-                                // Attacker who used Death Note does NOT get any screen overlay
-                                window.deathnoteEffectUntil = 0;
-                                window.deathnoteBannerText = "";
-                                window.deathnoteSubText = "";
-                            }
-                            if (renderer && typeof renderer.triggerDeathEffect === "function") {
-                                let targetX = 0, targetY = 0;
-                                const isLocalTarget = (data.targetId === localPlayerId);
-                                if (isLocalTarget) {
-                                    targetX = physics.predictedState.x;
-                                    targetY = physics.predictedState.y;
-                                } else if (physics.remotePlayers.has(data.targetId)) {
-                                    const rp = physics.remotePlayers.get(data.targetId);
-                                    targetX = rp.x;
-                                    targetY = rp.y;
-                                }
-                                if (targetX || targetY) {
-                                    renderer.triggerDeathEffect(targetX, targetY, isLocalTarget, "DEATH NOTE!");
-                                }
-                            }
-                        } else if (data.itemType === "ice") {
-                            addActivityFeedLog(`${userStr} <span style="color: #70c5ce;">FROZE</span> ${targetStr} in ICE`);
                         }
                     }
 

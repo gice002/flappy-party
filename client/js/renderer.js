@@ -1418,27 +1418,29 @@ class CanvasRenderer {
     }
 
     renderCheckpointsAndFinish() {
-        for (let chk of this.checkpoints) {
-            if (this.finishLineX > 0 && Math.abs(chk.respawn_coordinate_x - this.finishLineX) < 10) continue;
-            const screenX = chk.respawn_coordinate_x - this.cameraX;
-            if (screenX < -50 || screenX > this.width + 50) continue;
+        if (this.modeId !== "flappy_chained") {
+            for (let chk of this.checkpoints) {
+                if (this.finishLineX > 0 && Math.abs(chk.respawn_coordinate_x - this.finishLineX) < 10) continue;
+                const screenX = chk.respawn_coordinate_x - this.cameraX;
+                if (screenX < -50 || screenX > this.width + 50) continue;
 
-            this.ctx.save();
-            this.ctx.strokeStyle = "#3993d0";
-            this.ctx.lineWidth = 4;
-            this.ctx.setLineDash([8, 8]);
-            this.ctx.beginPath();
-            this.ctx.moveTo(screenX, 0);
-            this.ctx.lineTo(screenX, 616);
-            this.ctx.stroke();
+                this.ctx.save();
+                this.ctx.strokeStyle = "#3993d0";
+                this.ctx.lineWidth = 4;
+                this.ctx.setLineDash([8, 8]);
+                this.ctx.beginPath();
+                this.ctx.moveTo(screenX, 0);
+                this.ctx.lineTo(screenX, 616);
+                this.ctx.stroke();
 
-            this.ctx.fillStyle = "#3993d0";
-            this.ctx.fillRect(screenX - 15, 40, 30, 20);
-            this.ctx.fillStyle = "#ffffff";
-            this.ctx.font = "8px 'Press Start 2P'";
-            this.ctx.textAlign = "center";
-            this.ctx.fillText("CHK", screenX, 54);
-            this.ctx.restore();
+                this.ctx.fillStyle = "#3993d0";
+                this.ctx.fillRect(screenX - 15, 40, 30, 20);
+                this.ctx.fillStyle = "#ffffff";
+                this.ctx.font = "8px 'Press Start 2P'";
+                this.ctx.textAlign = "center";
+                this.ctx.fillText("CHK", screenX, 54);
+                this.ctx.restore();
+            }
         }
 
         if (this.finishLineX > 0) {
@@ -2227,8 +2229,8 @@ class CanvasRenderer {
                 : 4000);
         const totalDist = Math.max(1, effectiveFinishLineX - 100);
 
-        // Render Checkpoint Flags at relative positions along the track
-        if (this.checkpoints && this.checkpoints.length > 0) {
+        // Render Checkpoint Flags at relative positions along the track (omitted in Chained Mode)
+        if (this.modeId !== "flappy_chained" && this.checkpoints && this.checkpoints.length > 0) {
             const chkFlagImg = (this.images && this.images.checkpointflag) || (this.itemImages && this.itemImages.checkpointflag);
             for (let chk of this.checkpoints) {
                 const chkX = chk.respawn_coordinate_x || 0;
